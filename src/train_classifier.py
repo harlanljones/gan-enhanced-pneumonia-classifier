@@ -214,35 +214,72 @@ def load_history(filepath):
         return None
 
 def plot_metric(histories, metric_key_base, title, ylabel, output_path):
-    """Plots a specific metric (loss or accuracy) for multiple training histories."""
-    plt.figure(figsize=(10, 6))
+    """Plots a specific metric (loss or accuracy) for multiple training histories, optionally adding average lines for CV."""
+    plt.figure(figsize=(12, 7)) # Slightly wider for potentially more labels
     num_epochs = 0
     plot_has_data = False # Flag to check if any data was actually plotted
+    is_cv = len(histories) > 1
+    all_train_metrics = []
+    all_val_metrics = []
 
     for i, history in enumerate(histories):
         if history:
             train_key = f'train_{metric_key_base}'
             val_key = f'val_{metric_key_base}'
-            fold_label = f"Fold {i+1}" if len(histories) > 1 else "Run"
+            fold_label = f"Fold {i+1}" if is_cv else "Run"
 
             if train_key in history and val_key in history and len(history[train_key]) > 0:
                 epochs = range(1, len(history[train_key]) + 1)
                 num_epochs = max(num_epochs, len(epochs)) # Track max epochs across folds
-                plt.plot(epochs, history[train_key], label=f'{fold_label} Train {metric_key_base.capitalize()}')
-                plt.plot(epochs, history[val_key], linestyle='--', label=f'{fold_label} Val {metric_key_base.capitalize()}')
+                
+                # Store for averaging later if CV
+                if is_cv:
+                    # Ensure lengths match max_len found during loading (already padded)
+                    all_train_metrics.append(history[train_key])
+                    all_val_metrics.append(history[val_key])
+
+                # Plot individual lines (slightly transparent for CV)
+                alpha = 0.6 if is_cv else 1.0
+                line_style_train = '-'
+                line_style_val = '--'
+                plt.plot(epochs, history[train_key], linestyle=line_style_train, alpha=alpha, label=f'{fold_label} Train')
+                plt.plot(epochs, history[val_key], linestyle=line_style_val, alpha=alpha, label=f'{fold_label} Val')
                 plot_has_data = True
-            # else: # Optional: be less verbose if keys/data missing, already warned by load_history
-            #     print(f"Warning: Missing keys or empty data for '{train_key}' or '{val_key}' in history {i+1}.")
+
+    # Add average lines if CV and data exists
+    if is_cv and plot_has_data and all_train_metrics and all_val_metrics:
+        try:
+            # Pad shorter histories again just in case (should be handled by load_history)
+            max_len_actual = max(len(m) for m in all_train_metrics + all_val_metrics)
+            padded_train = [m + [np.nan]*(max_len_actual - len(m)) for m in all_train_metrics]
+            padded_val = [m + [np.nan]*(max_len_actual - len(m)) for m in all_val_metrics]
+
+            mean_train = np.nanmean(np.array(padded_train), axis=0)
+            mean_val = np.nanmean(np.array(padded_val), axis=0)
+            # std_train = np.nanstd(np.array(padded_train), axis=0) # Optional: add std dev shading
+            # std_val = np.nanstd(np.array(padded_val), axis=0)    # Optional: add std dev shading
+
+            avg_epochs = range(1, len(mean_train) + 1)
+            plt.plot(avg_epochs, mean_train, color='black', linestyle='-', linewidth=2, label='Average Train')
+            plt.plot(avg_epochs, mean_val, color='black', linestyle='--', linewidth=2, label='Average Val')
+
+            # Optional: Fill between for std deviation
+            # plt.fill_between(avg_epochs, mean_train - std_train, mean_train + std_train, color='blue', alpha=0.1)
+            # plt.fill_between(avg_epochs, mean_val - std_val, mean_val + std_val, color='orange', alpha=0.1)
+        except Exception as e:
+            print(f"Warning: Could not calculate or plot average lines for {metric_key_base}: {e}")
+
 
     if plot_has_data: # Only finalize plot if data was plotted
         plt.title(title)
         plt.xlabel('Epoch')
         plt.ylabel(ylabel)
-        plt.xlim(1, num_epochs) # Adjust x-axis limits based on the actual number of epochs plotted
-        if 'acc' in metric_key_base:
+        if num_epochs > 0 : plt.xlim(1, num_epochs) # Adjust x-axis limits
+        if 'acc' in metric_key_base.lower(): # Check 'acc' instead of exact match
              plt.ylim(0, 1.05) # Extend slightly beyond 1.0
-        plt.legend(loc='best', fontsize='small') # Adjust legend location and size
-        plt.grid(True)
+        # Adjust legend placement and size
+        plt.legend(loc='best', fontsize='small', ncol=2 if is_cv else 1) # Use 2 columns for CV legend
+        plt.grid(True, linestyle='--', alpha=0.6)
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close() # Close the figure to free memory
@@ -253,69 +290,102 @@ def plot_metric(histories, metric_key_base, title, ylabel, output_path):
 
 
 def plot_cv_summary(cv_summary_path, output_dir):
-    """Plots the final test metrics per fold from the CV summary."""
+    """Plots the final test metrics per fold, separating Loss and adding averages."""
     try:
         with open(cv_summary_path, 'r') as f:
             summary = json.load(f)
-    except FileNotFoundError:
-        print(f"Warning: CV summary file not found: {cv_summary_path}")
-        return
-    except json.JSONDecodeError:
-        print(f"Warning: Could not decode JSON from: {cv_summary_path}")
-        return
     except Exception as e:
-        print(f"Warning: An error occurred loading {cv_summary_path}: {e}")
+        print(f"Warning: Could not load or parse CV summary file {cv_summary_path}: {e}")
         return
 
     metrics_per_fold = summary.get('test_metrics_per_fold', [])
-    if not metrics_per_fold:
-        print("Warning: No 'test_metrics_per_fold' found in CV summary.")
+    avg_metrics = summary.get('average_test_metrics', {}) # Get averages too
+
+    if not metrics_per_fold or not isinstance(metrics_per_fold[0], dict):
+        print("Warning: No valid 'test_metrics_per_fold' list of dicts found in CV summary.")
         return
 
-    # Dynamically get metric keys from the first fold (ensure consistency or handle errors)
-    if not isinstance(metrics_per_fold[0], dict):
-         print("Warning: 'test_metrics_per_fold' does not contain dictionaries.")
-         return
-    metric_keys = [k for k in metrics_per_fold[0].keys() if k != 'loss'] # Exclude loss for bar plot
-    if not metric_keys:
-        print("Warning: No suitable metric keys found (excluding 'loss') in CV summary.")
+    # Separate keys for primary metrics and loss
+    primary_metric_keys = [k for k in metrics_per_fold[0].keys() if k != 'loss']
+    loss_key = 'loss' if 'loss' in metrics_per_fold[0] else None
+
+    if not primary_metric_keys and not loss_key:
+        print("Warning: No metric keys found in CV summary.")
         return
 
     num_folds = len(metrics_per_fold)
     folds = [f"Fold {i+1}" for i in range(num_folds)]
-
-    num_metrics = len(metric_keys)
-    bar_width = 0.8 / num_metrics # Adjust bar width based on number of metrics
     index = np.arange(num_folds)
 
-    plt.figure(figsize=(12, 7))
-    plot_has_data = False # Flag to check if any bars were added
+    # --- Plot 1: Primary Metrics (Accuracy, Precision, Recall, F1) ---
+    if primary_metric_keys:
+        num_metrics = len(primary_metric_keys)
+        bar_width = 0.8 / num_metrics # Adjust bar width based on number of metrics
 
-    for i, key in enumerate(metric_keys):
-        values = [fold_metrics.get(key, np.nan) for fold_metrics in metrics_per_fold]
-        # Check if we have valid values before plotting
-        if not all(np.isnan(values)):
-            plot_key = key.replace('_', ' ').capitalize()
-            plt.bar(index + i * bar_width, values, bar_width, label=plot_key)
-            plot_has_data = True
+        plt.figure(figsize=(12, 7))
+        plot_has_data = False
 
-    if plot_has_data:
-        plt.xlabel('Fold')
-        plt.ylabel('Score')
-        plt.title('Test Set Metrics per Fold (Cross-Validation)')
-        plt.xticks(index + bar_width * (num_metrics - 1) / 2, folds) # Center ticks between bars
-        plt.ylim(0, 1.05) # Set y-axis limit for typical metrics (0-1)
-        plt.legend(loc='best', fontsize='small')
-        plt.grid(axis='y', linestyle='--')
-        plt.tight_layout()
+        for i, key in enumerate(primary_metric_keys):
+            values = [fold_metrics.get(key, np.nan) for fold_metrics in metrics_per_fold]
+            if not all(np.isnan(values)):
+                plot_key_label = key.replace('_', ' ').capitalize()
+                # Plot bars
+                plt.bar(index + i * bar_width - (bar_width * (num_metrics-1) / 2) , values, bar_width, label=plot_key_label) # Center bars
+                # Plot average line
+                avg_value = avg_metrics.get(key, np.nan)
+                if not np.isnan(avg_value):
+                    plt.hlines(avg_value, index[0] - bar_width, index[-1] + bar_width * num_metrics,
+                               colors=plt.gca().patches[i*num_folds].get_facecolor(), # Match bar color
+                               linestyles='dashed', label=f'Avg {plot_key_label}: {avg_value:.3f}')
+                plot_has_data = True
 
-        output_path = os.path.join(output_dir, 'cv_test_metrics_per_fold.png')
-        plt.savefig(output_path)
-        plt.close() # Close the figure to free memory
-        print(f"Saved plot to {output_path}")
-    else:
-        plt.close() # Ensure figure is closed even if no data plotted
-        print("Skipping CV summary plot as no valid metric data was found.")
+        if plot_has_data:
+            plt.xlabel('Fold')
+            plt.ylabel('Score')
+            plt.title('Test Set Performance Metrics per Fold (Cross-Validation)')
+            plt.xticks(index, folds) # Place ticks at the center of each group of bars
+            plt.ylim(0, 1.05) # Set y-axis limit for typical metrics (0-1)
+            plt.legend(loc='best', fontsize='small')
+            plt.grid(axis='y', linestyle='--', alpha=0.6)
+            plt.tight_layout()
+            output_path = os.path.join(output_dir, 'cv_test_metrics_per_fold.png') # Keep original name or change if desired
+            plt.savefig(output_path)
+            plt.close()
+            print(f"Saved plot to {output_path}")
+        else:
+            plt.close()
+            print("Skipping primary CV summary plot as no valid metric data was found.")
+
+    # --- Plot 2: Loss ---
+    if loss_key:
+        loss_values = [fold_metrics.get(loss_key, np.nan) for fold_metrics in metrics_per_fold]
+
+        if not all(np.isnan(loss_values)):
+            plt.figure(figsize=(10, 6))
+            plt.bar(index, loss_values, label='Test Loss')
+
+            # Plot average loss line
+            avg_loss = avg_metrics.get(loss_key, np.nan)
+            if not np.isnan(avg_loss):
+                 plt.hlines(avg_loss, index[0]-0.5, index[-1]+0.5, colors='red', linestyles='dashed', label=f'Avg Loss: {avg_loss:.4f}')
+
+            plt.xlabel('Fold')
+            plt.ylabel('Loss')
+            plt.title('Test Set Loss per Fold (Cross-Validation)')
+            plt.xticks(index, folds)
+            min_loss = np.nanmin(loss_values) if not all(np.isnan(loss_values)) else 0
+            max_loss = np.nanmax(loss_values) if not all(np.isnan(loss_values)) else 1
+            plt.ylim(min_loss * 0.9, max_loss * 1.1) # Adjust y-limits based on data
+            plt.legend(loc='best', fontsize='small')
+            plt.grid(axis='y', linestyle='--', alpha=0.6)
+            plt.tight_layout()
+            output_path = os.path.join(output_dir, 'cv_test_loss_per_fold.png') # Separate file for loss
+            plt.savefig(output_path)
+            plt.close()
+            print(f"Saved plot to {output_path}")
+        else:
+            plt.close()
+            print("Skipping CV loss plot as no valid loss data was found.")
 
 
 def generate_plots(metrics_dir, figures_dir):
@@ -543,8 +613,9 @@ if __name__ == '__main__':
     # Check if matplotlib is available before starting potentially long training
     try:
         import matplotlib.pyplot as plt
-    except ImportError:
-        print("Warning: Matplotlib not found. Plots will not be generated after training.")
-        print("Install matplotlib to generate plots: pip install matplotlib")
+        import numpy # Also check numpy which is now used more explicitly
+    except ImportError as e:
+        print(f"Warning: Missing plotting dependency ({e}). Plots will not be generated.")
+        print("Install dependencies to generate plots: pip install matplotlib numpy")
 
     main(args)
