@@ -1,0 +1,24 @@
+{
+    "metrics": {
+        "loss": 0.45601192251841227,
+        "accuracy": 0.7946666666666666,
+        "weighted_precision": 1.0,
+        "weighted_recall": 0.7946666666666666,
+        "weighted_f1_score": 0.8855869242199108
+    },
+    "config": {
+        "data_dir": "./data/processed",
+        "model_dir": "./models",
+        "results_dir": "./results/metrics",
+        "figures_dir": "./results/figures",
+        "epochs": 10,
+        "batch_size": 32,
+        "lr": 0.001,
+        "unfreeze": true,
+        "use_synthetic": false,
+        "synthetic_dir": "./data/synthetic",
+        "k_folds": 0,
+        "workers": 4,
+        "cpu": false
+    }
+}

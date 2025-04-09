@@ -29,6 +29,38 @@ data_transforms = {
     ]),
 }
 
+class SyntheticDataset(Dataset):
+    """Dataset for loading generated synthetic images."""
+    def __init__(self, synthetic_dir, transform=None, label=1):
+        """
+        Args:
+            synthetic_dir (string): Directory with all the synthetic images.
+            transform (callable, optional): Optional transform to be applied on a sample.
+            label (int): The label to assign to all synthetic images (default: 1, for 'Lung Opacity').
+        """
+        self.synthetic_dir = synthetic_dir
+        self.image_files = [os.path.join(synthetic_dir, f) for f in os.listdir(synthetic_dir) if f.endswith('.png')]
+        self.transform = transform
+        self.label = label
+        print(f"Found {len(self.image_files)} synthetic images in {synthetic_dir}")
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = self.image_files[idx]
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except Exception as e:
+            print(f"Warning: Error loading synthetic image {img_path}: {e}")
+            # Return a black image as a fallback
+            image = Image.new('RGB', (224, 224), color='black')
+
+        if self.transform:
+            image = self.transform(image)
+
+        return image, self.label
+
 class RSNAPneumoniaDataset(Dataset):
     """Custom Dataset for RSNA Pneumonia data using metadata files."""
     
@@ -253,6 +285,175 @@ def get_kfold_dataloaders(data_dir=PROCESSED_DIR, k_folds=5, batch_size=32, num_
         shuffle=False, num_workers=num_workers, pin_memory=True
     )
     
+    return fold_dataloaders, test_loader
+
+# --- Functions for Augmented Data ---
+
+def get_augmented_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir='data/synthetic', batch_size=32, num_workers=4):
+    """
+    Creates training and testing DataLoaders using metadata files, augmenting the training set
+    with synthetic images. The test set remains unchanged.
+
+    Args:
+        data_dir (str): Directory containing the original processed dataset.
+        synthetic_dir (str): Directory containing the generated synthetic images.
+        batch_size (int): Batch size for training and testing.
+        num_workers (int): Number of workers for data loading.
+
+    Returns:
+        tuple: (train_loader, test_loader)
+    """
+    if not check_dataset_availability(data_dir):
+        raise FileNotFoundError(f"Original dataset not available in {data_dir}.")
+    if not os.path.exists(synthetic_dir) or not os.listdir(synthetic_dir):
+         raise FileNotFoundError(f"Synthetic dataset directory {synthetic_dir} is empty or does not exist. Generate images first.")
+
+
+    # Create original training dataset
+    original_train_dataset = RSNAPneumoniaDataset(
+        os.path.join(data_dir, 'Training', 'Images'),
+        os.path.join(data_dir, 'stage2_train_metadata.csv'),
+        transform=data_transforms['train'],
+        is_test=False
+    )
+
+    # Create synthetic dataset (assuming label 1 for pneumonia)
+    synthetic_dataset = SyntheticDataset(
+        synthetic_dir,
+        transform=data_transforms['train'] # Use same transforms as training
+    )
+
+    # Combine original training and synthetic datasets
+    augmented_train_dataset = torch.utils.data.ConcatDataset([original_train_dataset, synthetic_dataset])
+
+    # Create original test dataset (unchanged)
+    test_dataset = RSNAPneumoniaDataset(
+        os.path.join(data_dir, 'Test'),
+        os.path.join(data_dir, 'stage2_test_metadata.csv'),
+        transform=data_transforms['test'],
+        is_test=True
+    )
+
+    # Create data loaders
+    train_loader = DataLoader(
+        augmented_train_dataset, batch_size=batch_size,
+        shuffle=True, num_workers=num_workers, pin_memory=True
+    )
+
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size,
+        shuffle=False, num_workers=num_workers, pin_memory=True
+    )
+
+    print(f"Original train dataset size: {len(original_train_dataset)}")
+    print(f"Synthetic dataset size: {len(synthetic_dataset)}")
+    print(f"Augmented train dataset size: {len(augmented_train_dataset)}")
+    print(f"Test dataset size: {len(test_dataset)}")
+
+    return train_loader, test_loader
+
+
+def get_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir='data/synthetic', k_folds=5, batch_size=32, num_workers=4):
+    """
+    Creates DataLoaders for k-fold cross-validation, augmenting each training fold
+    with synthetic images. Validation and test sets contain only original data.
+
+    Args:
+        data_dir (str): Directory containing the original processed dataset.
+        synthetic_dir (str): Directory containing the generated synthetic images.
+        k_folds (int): Number of folds for cross-validation.
+        batch_size (int): Batch size for training and testing.
+        num_workers (int): Number of workers for data loading.
+
+    Returns:
+        tuple: (fold_dataloaders, test_loader)
+               fold_dataloaders: List of dictionaries containing 'train' (augmented) and 'val' (original) DataLoaders for each fold.
+               test_loader: DataLoader for the held-out test set (original).
+    """
+    if not check_dataset_availability(data_dir):
+        raise FileNotFoundError(f"Original dataset not available in {data_dir}.")
+    if not os.path.exists(synthetic_dir) or not os.listdir(synthetic_dir):
+         raise FileNotFoundError(f"Synthetic dataset directory {synthetic_dir} is empty or does not exist. Generate images first.")
+
+    # Create the full original training dataset (used for splitting)
+    full_train_dataset = RSNAPneumoniaDataset(
+        os.path.join(data_dir, 'Training', 'Images'),
+        os.path.join(data_dir, 'stage2_train_metadata.csv'),
+        transform=data_transforms['train'], # Base transforms for subset creation
+        is_test=False
+    )
+
+    # Create synthetic dataset (to be added to each training fold)
+    synthetic_dataset = SyntheticDataset(
+        synthetic_dir,
+        transform=data_transforms['train'] # Use same transforms as training
+    )
+    print(f"Synthetic dataset size: {len(synthetic_dataset)}")
+
+
+    # Create original test dataset (unchanged)
+    test_dataset = RSNAPneumoniaDataset(
+        os.path.join(data_dir, 'Test'),
+        os.path.join(data_dir, 'stage2_test_metadata.csv'),
+        transform=data_transforms['test'],
+        is_test=True
+    )
+
+    # Create K-fold splits on the original training data
+    kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+    fold_dataloaders = []
+
+    original_indices = list(range(len(full_train_dataset)))
+
+    for fold, (train_idx, val_idx) in enumerate(kf.split(original_indices)):
+        print(f"\nFold {fold+1}/{k_folds}")
+
+        # --- Create Training Subset (Original) ---
+        # Need to wrap Subset with a dataset applying TRAIN transforms
+        train_subset_original = torch.utils.data.Subset(full_train_dataset, train_idx)
+
+        # --- Augment Training Subset ---
+        # Combine the original training subset with ALL synthetic images
+        augmented_train_fold_dataset = torch.utils.data.ConcatDataset([train_subset_original, synthetic_dataset])
+        print(f"  Augmented Train Fold Size: {len(augmented_train_fold_dataset)} (Original: {len(train_subset_original)}, Synthetic: {len(synthetic_dataset)})")
+
+
+        # --- Create Validation Subset (Original) ---
+        # Create a separate dataset instance for validation subset with TEST transforms
+        val_dataset_instance = RSNAPneumoniaDataset(
+            os.path.join(data_dir, 'Training', 'Images'),
+            os.path.join(data_dir, 'stage2_train_metadata.csv'),
+            transform=data_transforms['test'], # Use test transforms for validation
+            is_test=False
+        )
+        val_subset = torch.utils.data.Subset(val_dataset_instance, val_idx)
+        print(f"  Validation Fold Size (Original): {len(val_subset)}")
+
+
+        # Create data loaders for this fold
+        train_loader = DataLoader(
+            augmented_train_fold_dataset, batch_size=batch_size,
+            shuffle=True, num_workers=num_workers, pin_memory=True
+        )
+
+        val_loader = DataLoader(
+            val_subset, batch_size=batch_size,
+            shuffle=False, num_workers=num_workers, pin_memory=True
+        )
+
+        fold_dataloaders.append({
+            'train': train_loader,
+            'val': val_loader
+        })
+
+    # Create the final test loader (original data)
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size,
+        shuffle=False, num_workers=num_workers, pin_memory=True
+    )
+    print(f"\nTest dataset size (Original): {len(test_dataset)}")
+
+
     return fold_dataloaders, test_loader
 
 if __name__ == '__main__':

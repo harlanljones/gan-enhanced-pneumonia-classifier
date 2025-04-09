@@ -2,65 +2,22 @@
 
 Enhancing Pneumonia Detection with GAN-Generated Synthetic Chest X-rays
 
-```mermaid
-graph TB
-    %% Data nodes
-    RawData[Raw X-ray Dataset]
-    TrainData[Training Split]
-    TestData[Test Split]
-    SynthData[Synthetic X-rays]
-    AugData[Augmented Dataset]
-
-    %% Process nodes
-    Split[Data Preprocessing & Split]
-    GAN[DCGAN Training]
-    VGG[VGG16 Feature Loss]
-    BaseModel[Baseline ResNet50]
-    AugModel[Augmented ResNet50]
-    BaseEval[Baseline Evaluation]
-    AugEval[Augmented Evaluation]
-    Compare[Performance Comparison]
-
-    %% Main flow
-    RawData --> Split
-    Split --> |80%| TrainData
-    Split --> |20%| TestData
-
-    %% GAN subgraph
-    subgraph GAN Training
-        TrainData --> GAN
-        GAN --> |Generator| SynthData
-        VGG --> |Perceptual Loss| GAN
-    end
-
-    %% Dataset combination
-    TrainData --> AugData
-    SynthData --> AugData
-
-    %% Training and evaluation paths
-    subgraph Baseline Path
-        TrainData --> BaseModel
-        TestData --> BaseEval
-        BaseModel --> BaseEval
-    end
-
-    subgraph Augmented Path
-        AugData --> AugModel
-        TestData --> AugEval
-        AugModel --> AugEval
-    end
-
-    %% Final comparison
-    BaseEval --> |Metrics| Compare
-    AugEval --> |Metrics| Compare
-
-    %% Styling
-    style RawData fill:#f9f,stroke:#333,stroke-width:2px
-    style SynthData fill:#ccf,stroke:#333,stroke-width:2px
-    style AugData fill:#ccf,stroke:#333,stroke-width:2px
-    style Compare fill:#cfc,stroke:#333,stroke-width:2px
-    style GAN fill:#fcc,stroke:#333,stroke-width:2px
-```
+## Table of Contents
+- [Task](#1-task)
+- [Related Work](#2-related-work)
+- [Approach](#3-approach)
+- [Dataset and Metrics](#4-dataset-and-metrics)
+- [File Structure](#5-file-structure)
+- [Setup and Usage](#6-setup-and-usage)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Dataset Preparation](#dataset-preparation)
+  - [Training the Baseline Classifier](#training-the-baseline-classifier)
+  - [Training the GAN](#training-the-gan)
+  - [Generating Synthetic Images](#generating-synthetic-images)
+  - [Training the Augmented Classifier](#training-the-augmented-classifier)
+  - [Analyzing Results](#analyzing-results)
+- [References](#7-references)
 
 ## 1. Task
 This project seeks to create realistic synthetic X-ray images of lungs with pneumonia using a Generative Adversarial Network (GAN) and assess their effect on enhancing a deep learning classifier's performance. By enriching the dataset with high-quality synthetic images, we aim to boost model accuracy and generalization, especially in scenarios with scarce medical data. The difficulty is in ensuring these images maintain authentic anatomical features and pneumonia-specific traits, like lung opacities, while preventing artifacts that might confuse the classifier. The synthetic images must faithfully represent pneumonia signs without adding deceptive patterns that could harm classifier effectiveness.  
@@ -72,41 +29,90 @@ Generative Adversarial Networks (GANs) have progressed synthetic image creation 
 We will implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays, conditioned on pneumonia labels to ensure relevant feature synthesis. To improve realism, we'll augment the standard adversarial loss with a perceptual loss using a pre-trained VGG-16 network, encouraging anatomical detail preservation. We'll adapt the open-source DCGAN implementation from PyTorch's examples, adding custom code for label conditioning and perceptual loss. Synthetic images will be generated (targeting 5,000 additional samples), processed (resized to 224x224, normalized), and combined with the original training set. A pre-trained ResNet-50 classifier will then be fine-tuned on this augmented dataset using cross-entropy loss, with performance compared against a baseline trained on the original data alone. 
 
 ## 4. Dataset and Metrics
-The project utilizes the RSNA Pneumonia Processed Dataset from Kaggle ([link](https://www.kaggle.com/datasets/iamtapendu/rsna-pneumonia-processed-dataset)), which includes 26,684 pre-processed chest X-ray images labeled as "Normal," "No Lung Opacity/Not Normal," or "Lung Opacity," divided into 21,347 training and 5,337 testing images; since the dataset is already resized and normalized, minimal pre-processing is required, though we'll ensure synthetic images align with this format. Our metric is classification accuracy, defined as the proportion of correctly classified images in a binary setup—collapsing "No Lung Opacity/Not Normal" into "Normal" versus "Lung Opacity" for pneumonia detection—aiming for over 85% accuracy on the test set, exceeding the baseline ResNet-50's approximate 80% on the original dataset alone, validated through 5-fold cross-validation.
+The project utilizes the RSNA Pneumonia Detection Challenge dataset from Kaggle ([link](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge)), specifically using a pre-processed version available at ([link](https://www.kaggle.com/datasets/iamtapendu/rsna-pneumonia-processed-dataset)). This version includes metadata files (`stage2_train_metadata.csv`, `stage2_test_metadata.csv`) and corresponding PNG images located in `Training/Images/` and `Test/` directories within the download. The training metadata contains class labels ("Normal," "No Lung Opacity/Not Normal," "Lung Opacity"), while the test metadata uses a "PredictionString" format. The dataset comprises approximately 26,684 training images and 6,671 test images (actual numbers may vary slightly based on the metadata). Our `data_loader.py` script processes this structure, converting it into a binary classification task: "Lung Opacity" (label 1) vs. all others (label 0). Minimal pre-processing is applied using standard ImageNet normalization and resizing to 224x224 via `torchvision.transforms`. Our primary metric is classification accuracy, aiming for over 85% on the test set, compared against a baseline ResNet-50's performance (initially around 80%). We also track weighted precision, recall, and F1-score. Validation is performed using 5-fold cross-validation by default, configurable via script arguments.
 
 ## 5. File Structure
 ```
 gan-enhanced-pneumonia-classifier/
 │
-├── .gitignore          
-├── README.md           # Project overview, setup instructions, and results
-├── requirements.txt    # Project dependencies with kaggle and other packages
+├── .gitignore           # Git ignore rules
+├── .gitattributes      # Git attributes configuration
+├── LICENSE             # Project license
+├── README.md           # Project documentation
+├── requirements.txt    # Project dependencies
 │
 ├── data/
-│   ├── raw/            # Raw dataset downloaded from Kaggle
-│   └── processed/      # Processed data with train/test and class splits
+│   ├── processed/      # Location for the downloaded and extracted dataset
+│   │   ├── stage2_train_metadata.csv
+│   │   ├── stage2_test_metadata.csv
+│   │   ├── Training/
+│   │   │   └── Images/ # Training PNG images
+│   │   └── Test/       # Test PNG images
+│   └── synthetic/      # Generated synthetic images
 │
-├── models/             # Saved model checkpoints (GAN generator/discriminator, classifier)
+├── models/
+│   ├── baseline_resnet50.pth      # Baseline classifier checkpoint
+│   ├── augmented_resnet50.pth     # Augmented classifier checkpoint
+│   └── gan/                       # GAN model checkpoints
+│       ├── generator_final.pth
+│       └── discriminator_final.pth
 │
-├── notebooks/          # Jupyter notebooks for exploration, experimentation, visualization
+├── notebooks/          # Jupyter notebooks for exploration and visualization
 │
 ├── results/
-│   ├── figures/        # Generated figures and plots
-│   └── metrics/        # Evaluation metrics (e.g., accuracy scores, loss curves)
+│   ├── figures/        # Training curves and performance plots
+│   │   ├── baseline_*.png
+│   │   └── augmented_*.png
+│   ├── metrics/        # Training and evaluation metrics
+│   │   ├── training_history.json
+│   │   ├── final_evaluation_metrics.json
+│   │   ├── cv_summary_metrics.json
+│   │   └── gan_training_history.json
+│   ├── analysis/       # Analysis outputs
+│   │   ├── comparison_*.png       # Comparative visualizations
+│   │   └── comparison_report.txt  # Detailed performance report
+│   └── gan_images/     # GAN-generated sample images during training
 │
 ├── src/
 │   ├── __init__.py
-│   ├── data_loader.py  # Data loading with path handling and dataset verification
-│   ├── download_dataset.py # Kaggle API integration for dataset acquisition
-│   ├── dcgan.py        # DCGAN model implementation (generator, discriminator)
-│   ├── classifier.py   # ResNet-50 implementation with pretrained weights
-│   ├── train_gan.py    # Script to train the GAN
-│   ├── train_classifier.py # Script to train the classifier with cross-validation
-│   └── utils.py        # Utility functions
+│   ├── analyze_results.py    # Results analysis and visualization
+│   ├── classifier.py         # ResNet50 model implementation
+│   ├── data_loader.py       # Dataset loading and preprocessing
+│   ├── dcgan.py             # DCGAN architecture implementation
+│   ├── download_dataset.py   # Dataset download script
+│   ├── generate_synthetic.py # Synthetic image generation
+│   ├── train_classifier.py   # Classifier training script
+│   ├── train_gan.py         # GAN training script
+│   └── utils.py             # Utility functions
 │
-└── tests/              # Unit tests for the source code
+└── tests/              # Unit tests for source code
     └── __init__.py
+
 ```
+
+The project follows a modular structure:
+
+- **Source Code (`src/`)**: Core implementation files
+  - Model architectures (`classifier.py`, `dcgan.py`)
+  - Training scripts (`train_classifier.py`, `train_gan.py`)
+  - Data handling (`data_loader.py`, `download_dataset.py`)
+  - Analysis tools (`analyze_results.py`)
+
+- **Data Management (`data/`)**: 
+  - Original dataset in `processed/`
+  - Synthetic images in `synthetic/`
+
+- **Results (`results/`)**:
+  - Training metrics and evaluation results
+  - Performance visualizations
+  - Analysis reports and comparisons
+  - Generated samples from GAN
+
+- **Models (`models/`)**: 
+  - Saved model checkpoints
+  - Both baseline and augmented versions
+
+Each component is designed to be modular and reusable, with clear separation of concerns between data processing, model implementation, training, and analysis.
 
 ## 6. Setup and Usage
 
@@ -118,91 +124,160 @@ gan-enhanced-pneumonia-classifier/
 
 ### Installation
 
-1. Clone the repository:
+1. **Clone the repository**
    ```bash
    git clone https://github.com/yourusername/gan-enhanced-pneumonia-classifier.git
    cd gan-enhanced-pneumonia-classifier
    ```
 
-2. Create and activate a virtual environment (Recommended):
-   - Using a virtual environment isolates project dependencies.
-   - **Windows:**
-     ```powershell
-     py -m venv .venv
-     .\.venv\Scripts\activate
-     ```
-   - **macOS/Linux:**
-     ```bash
-     python3 -m venv .venv
-     source .venv/bin/activate
-     ```
-   - Your terminal prompt should now show `(.venv)` at the beginning.
+2. **Create and activate a virtual environment**
+   ```bash
+   # Windows
+   py -m venv .venv
+   .\.venv\Scripts\activate
 
-3. Install dependencies (inside the activated environment):
+   # macOS/Linux
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Install PyTorch with CUDA support:
-   - The base requirements only install CPU versions of PyTorch.
+4. **Install PyTorch with CUDA support**
    ```bash
    pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
    ```
-   - For the latest PyTorch versions and CUDA compatibility, visit [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/)
-   - To verify your installation is using CUDA:
-   ```bash
-   python -c "import torch; print('CUDA available:', torch.cuda.is_available());"
-   ```
 
-5. Set up Kaggle API:
-   - Create a Kaggle account if you don't have one: [Kaggle](https://www.kaggle.com/)
-   - Go to your account settings (https://www.kaggle.com/account)
-   - Scroll down to the API section and click "Create New API Token"
-   - This will download a `kaggle.json` file with your credentials
-   - Create a `.kaggle` directory in your home folder and place the `kaggle.json` file there:
+5. **Set up Kaggle API**
+   - Create a Kaggle account at [Kaggle](https://www.kaggle.com/)
+   - Go to your account settings
+   - Create new API token
+   - Set up credentials:
      ```bash
      mkdir -p ~/.kaggle
      cp /path/to/downloaded/kaggle.json ~/.kaggle/
-     chmod 600 ~/.kaggle/kaggle.json  # Set appropriate permissions
+     chmod 600 ~/.kaggle/kaggle.json
      ```
 
 ### Dataset Preparation
 
-1. Download the RSNA Pneumonia Processed dataset:
+1. **Download the dataset**
    ```bash
    python src/download_dataset.py
    ```
-   This script will:
-   - Download the specified dataset from Kaggle (`iamtapendu/rsna-pneumonia-processed-dataset` by default)
-   - Extract the dataset into the target directory (e.g., `./data/processed`)
-   - The dataset is expected to already contain the necessary `train/` and `test/` structure with class subfolders.
 
-2. Verify the dataset structure:
+2. **Verify dataset structure**
    ```bash
    python src/data_loader.py
    ```
-   This will check if the dataset is properly loaded and show sample data.
+
+   Expected structure:
+   ```
+   ./data/processed/
+   ├── stage2_train_metadata.csv
+   ├── stage2_test_metadata.csv
+   ├── Training/
+   │   └── Images/
+   └── Test/
+   ```
 
 ### Training the Baseline Classifier
 
-Run the baseline ResNet50 classifier training:
-
+**Basic training:**
 ```bash
 python src/train_classifier.py
 ```
 
-Optional arguments:
-- `--data-dir`: Path to the processed dataset (default: ./data/processed)
-- `--epochs`: Number of training epochs (default: 15)
-- `--batch-size`: Batch size for training (default: 32)
-- `--lr`: Learning rate (default: 0.001)
-- `--unfreeze`: Unfreeze base ResNet layers for fine-tuning
-- `--k-folds`: Number of folds for cross-validation (default: 5, set to 0 to disable)
-- `--cpu`: Force use of CPU even if CUDA is available
+**Available options:**
+```bash
+--data-dir PATH      # Dataset directory (default: ./data/processed)
+--model-dir PATH     # Model save directory (default: ./models)
+--results-dir PATH   # Results directory (default: ./results/metrics)
+--figures-dir PATH   # Figures directory (default: ./results/figures)
+--epochs N          # Training epochs (default: 15)
+--batch-size N      # Batch size (default: 32)
+--lr FLOAT         # Learning rate (default: 0.001)
+--unfreeze         # Unfreeze base ResNet layers
+--k-folds N        # Cross-validation folds (default: 5)
+--workers N        # Data loading workers (default: 4)
+--cpu              # Force CPU usage
+```
 
-### Training the GAN (Coming Soon)
+### Training the GAN
 
-Instructions for GAN training will be added.
+**Basic training:**
+```bash
+python src/train_gan.py
+```
+
+**Available options:**
+```bash
+--data-dir PATH     # Dataset directory
+--model-dir PATH    # Model save directory
+--output-dir PATH   # Base results directory
+--results-dir PATH  # Metrics directory
+--figures-dir PATH  # Figures directory
+--epochs N         # Training epochs (default: 50)
+--batch-size N     # Training batch size (default: 128)
+--lr FLOAT        # Learning rate (default: 0.0002)
+--latent-dim N    # Latent vector size (default: 100)
+```
+
+### Generating Synthetic Images
+
+1. **Generate images using trained GAN:**
+   ```bash
+   python src/generate_synthetic.py --model-path ./models/gan/generator_final.pth
+   ```
+
+2. **Available options:**
+   ```bash
+   --model-path PATH  # Path to generator model (required)
+   --output-dir PATH  # Output directory (default: ./data/synthetic)
+   --num-images N     # Number of images to generate (default: 5000)
+   --batch-size N     # Generation batch size (default: 64)
+   ```
+
+### Training the Augmented Classifier
+
+1. **Train with synthetic data:**
+   ```bash
+   python src/train_classifier.py --use-synthetic
+   ```
+
+2. **Advanced configuration:**
+   ```bash
+   python src/train_classifier.py \
+       --use-synthetic \
+       --synthetic-dir /path/to/synthetic/images \
+       --epochs 20 \
+       --batch-size 64 \
+       --lr 0.0005 \
+       --unfreeze \
+       --k-folds 5
+   ```
+
+### Analyzing Results
+
+1. **Run analysis script:**
+   ```bash
+   python src/analyze_results.py
+   ```
+
+2. **Available options:**
+   ```bash
+   --metrics-dir PATH  # Metrics directory (default: ./results/metrics)
+   --figures-dir PATH  # Output directory (default: ./results/analysis)
+   ```
+
+3. **Generated outputs:**
+   - Comparative visualizations (`./results/analysis/comparison_*.png`)
+   - Performance report (`./results/analysis/comparison_report.txt`)
+   - Cross-validation analysis
+   - Training curves comparison
 
 ## 7. References
 [1] Goodfellow, I., et al. (2014). Generative Adversarial Nets. *Advances in Neural Information Processing Systems*.
