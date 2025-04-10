@@ -26,10 +26,10 @@ This project seeks to create realistic synthetic X-ray images of lungs with pneu
 Generative Adversarial Networks (GANs) have progressed synthetic image creation in medical imaging. Goodfellow et al. (2014) pioneered GANs, achieving lifelike image generation, though initial versions grappled with instability and poor quality [1]. Frid-Adar et al. (2018) employed GANs to enhance liver lesion datasets, boosting CNN accuracy, yet struggled with realism for intricate anatomies [2]. Yi et al. (2019) surveyed GANs in medical contexts, citing X-ray augmentation wins but underscoring problems with retaining diagnostic traits [3]. Kazeminia et al. (2020) evaluated GANs for medical image tasks, stressing X-ray synthesis promise while noting challenges in pathology-specific detail capture [4]. These works expose flaws in anatomical accuracy and feature retention—gaps we tackle with conditional generation and improved loss functions.
 
 ## 3. Approach
-We will implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays, conditioned on pneumonia labels to ensure relevant feature synthesis. To improve realism, we'll augment the standard adversarial loss with a perceptual loss using a pre-trained VGG-16 network, encouraging anatomical detail preservation. We'll adapt the open-source DCGAN implementation from PyTorch's examples, adding custom code for label conditioning and perceptual loss. Synthetic images will be generated (targeting 5,000 additional samples), processed (resized to 224x224, normalized), and combined with the original training set. A pre-trained ResNet-50 classifier will then be fine-tuned on this augmented dataset using cross-entropy loss, with performance compared against a baseline trained on the original data alone. 
+We will implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays. This is an unconditional GAN, meaning it learns to generate images representative of the training data distribution without explicit label input during generation. To improve training stability, we employ label smoothing for the real class in the discriminator (e.g., using labels of 0.9 instead of 1.0). We adapt the standard DCGAN architecture using `torch.nn.ConvTranspose2d` for the generator and `torch.nn.Conv2d` for the discriminator, trained with Binary Cross-Entropy loss. Synthetic images will be generated (targeting 5,000 additional samples), processed (resized to 224x224, normalized using ImageNet statistics), and combined with the original training set. A pre-trained ResNet-50 classifier (from `torchvision.models`) will then be fine-tuned on this augmented dataset using cross-entropy loss, with performance compared against a baseline trained on the original data alone. 
 
 ## 4. Dataset and Metrics
-The project utilizes the RSNA Pneumonia Detection Challenge dataset from Kaggle ([link](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge)), specifically using a pre-processed version available at ([link](https://www.kaggle.com/datasets/iamtapendu/rsna-pneumonia-processed-dataset)). This version includes metadata files (`stage2_train_metadata.csv`, `stage2_test_metadata.csv`) and corresponding PNG images located in `Training/Images/` and `Test/` directories within the download. The training metadata contains class labels ("Normal," "No Lung Opacity/Not Normal," "Lung Opacity"), while the test metadata uses a "PredictionString" format. The dataset comprises approximately 26,684 training images and 6,671 test images (actual numbers may vary slightly based on the metadata). Our `data_loader.py` script processes this structure, converting it into a binary classification task: "Lung Opacity" (label 1) vs. all others (label 0). Minimal pre-processing is applied using standard ImageNet normalization and resizing to 224x224 via `torchvision.transforms`. Our primary metric is classification accuracy, aiming for over 85% on the test set, compared against a baseline ResNet-50's performance (initially around 80%). We also track weighted precision, recall, and F1-score. Validation is performed using 5-fold cross-validation by default, configurable via script arguments.
+The project utilizes the RSNA Pneumonia Detection Challenge dataset from Kaggle ([link](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge)), specifically using a pre-processed version available at ([link](https://www.kaggle.com/datasets/iamtapendu/rsna-pneumonia-processed-dataset)). This version includes metadata files (`stage2_train_metadata.csv`, `stage2_test_metadata.csv`) and corresponding PNG images located in `Training/Images/` and `Test/` directories within the download. The training metadata contains class labels ("Normal," "No Lung Opacity/Not Normal," "Lung Opacity"), while the test metadata uses a "PredictionString" format. The dataset comprises approximately 26,684 training images and 6,671 test images (actual numbers may vary slightly based on the metadata). Our `data_loader.py` script processes this structure, converting it into a binary classification task: "Lung Opacity" is mapped to label 1 (positive class), while all other classes ("Normal", "No Lung Opacity/Not Normal") are mapped to label 0 (negative class). Standard ImageNet normalization and resizing to 224x224 via `torchvision.transforms` are applied. Our primary metric is classification accuracy, aiming for over 85% on the test set, compared against a baseline ResNet-50's performance (initially around 80%). We also track weighted precision, recall, and F1-score to account for potential class imbalance. Validation is performed using 5-fold cross-validation by default, configurable via script arguments.
 
 ## 5. File Structure
 ```
@@ -170,19 +170,16 @@ Each component is designed to be modular and reusable, with clear separation of 
    ```
 
 2. **Verify dataset structure**
-   ```bash
-   python src/data_loader.py
-   ```
-
-   Expected structure:
+   After running the download script, check the `./data/processed/` directory. You should see the following structure:
    ```
    ./data/processed/
    ├── stage2_train_metadata.csv
    ├── stage2_test_metadata.csv
    ├── Training/
-   │   └── Images/
-   └── Test/
+   │   └── Images/  # Contains training PNGs
+   └── Test/        # Contains test PNGs
    ```
+   You can also run `python src/data_loader.py --data-dir ./data/processed` which will test loading the dataset and report basic statistics if successful, or errors if the structure is incorrect.
 
 ### Training the Baseline Classifier
 
@@ -215,15 +212,22 @@ python src/train_gan.py
 
 **Available options:**
 ```bash
---data-dir PATH     # Dataset directory
---model-dir PATH    # Model save directory
---output-dir PATH   # Base results directory
---results-dir PATH  # Metrics directory
---figures-dir PATH  # Figures directory
---epochs N         # Training epochs (default: 50)
---batch-size N     # Training batch size (default: 128)
---lr FLOAT        # Learning rate (default: 0.0002)
---latent-dim N    # Latent vector size (default: 100)
+--data-dir PATH     # Path to the processed dataset directory (default: ./data/processed)
+--model-dir PATH    # Base directory to save model checkpoints (GAN models saved to ./models/gan/) (default: ./models)
+--output-dir PATH   # Base directory for outputs (generated images saved to ./results/gan_images/) (default: ./results)
+--results-dir PATH  # Directory to save training history JSON (gan_training_history.json) (default: ./results/metrics)
+--figures-dir PATH  # Directory to save generated plot images (gan_loss_curve.png) (default: ./results/figures)
+--epochs N         # Number of training epochs (default: 50)
+--batch-size N     # Batch size for training (default: 128)
+--lr FLOAT        # Learning rate for Adam optimizer (default: 0.0002)
+--beta1 FLOAT     # Beta1 hyperparameter for Adam optimizers (default: 0.5)
+--latent-dim N    # Size of the latent z vector (default: 100)
+--num-channels N  # Number of image channels (default: 3)
+--feature-maps-g N # Base feature maps for Generator (default: 64)
+--feature-maps-d N # Base feature maps for Discriminator (default: 64)
+--workers N       # Number of data loading workers (default: 4)
+--vis-batch-size N # Batch size for generating visualization images (default: 64)
+--cpu             # Force CPU usage
 ```
 
 ### Generating Synthetic Images
@@ -235,10 +239,13 @@ python src/train_gan.py
 
 2. **Available options:**
    ```bash
-   --model-path PATH  # Path to generator model (required)
-   --output-dir PATH  # Output directory (default: ./data/synthetic)
+   --model-path PATH  # Path to the trained generator checkpoint (required)
+   --output-dir PATH  # Output directory for synthetic images (default: ./data/synthetic)
    --num-images N     # Number of images to generate (default: 5000)
-   --batch-size N     # Generation batch size (default: 64)
+   --latent-dim N     # Latent vector size (must match training) (default: 100)
+   --feature-maps-g N # Generator base feature maps (must match training) (default: 64)
+   --batch-size N     # Batch size for generation (default: 64)
+   --cpu              # Force CPU usage
    ```
 
 ### Training the Augmented Classifier
@@ -269,8 +276,8 @@ python src/train_gan.py
 
 2. **Available options:**
    ```bash
-   --metrics-dir PATH  # Metrics directory (default: ./results/metrics)
-   --figures-dir PATH  # Output directory (default: ./results/analysis)
+   --metrics-dir PATH  # Directory containing training metrics files (default: ./results/metrics)
+   --analysis-dir PATH # Output directory for analysis reports/figures (default: ./results/analysis)
    ```
 
 3. **Generated outputs:**

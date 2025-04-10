@@ -3,9 +3,9 @@
 Final Test Set Performance:
 
 Accuracy:
-  Baseline:  0.7947
-  Augmented: 0.8773
-  Change:    +10.4%
+  Baseline:  0.7513
+  Augmented: 0.9090
+  Change:    +21.0%
 
 Precision:
   Baseline:  1.0000
@@ -13,29 +13,29 @@ Precision:
   Change:    +0.0%
 
 Recall:
-  Baseline:  0.7947
-  Augmented: 0.8773
-  Change:    +10.4%
+  Baseline:  0.7513
+  Augmented: 0.9090
+  Change:    +21.0%
 
 F1 Score:
-  Baseline:  0.8856
-  Augmented: 0.9347
-  Change:    +5.5%
+  Baseline:  0.8580
+  Augmented: 0.9523
+  Change:    +11.0%
 
 Cross-Validation Results:
 
 Accuracy:
-  Baseline:  0.7326 ± 0.1371
-  Augmented: 0.7255 ± 0.0750
+  Baseline:  0.7774 ± 0.0312
+  Augmented: 0.7314 ± 0.0744
 
 Precision:
   Baseline:  1.0000 ± 0.0000
   Augmented: 1.0000 ± 0.0000
 
 Recall:
-  Baseline:  0.7326 ± 0.1371
-  Augmented: 0.7255 ± 0.0750
+  Baseline:  0.7774 ± 0.0312
+  Augmented: 0.7314 ± 0.0744
 
 F1 Score:
-  Baseline:  0.8382 ± 0.0951
-  Augmented: 0.8387 ± 0.0495
+  Baseline:  0.8744 ± 0.0194
+  Augmented: 0.8428 ± 0.0470
