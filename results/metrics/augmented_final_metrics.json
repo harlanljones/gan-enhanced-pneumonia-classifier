@@ -1,10 +1,10 @@
 {
     "metrics": {
-        "loss": 0.4147765370210012,
-        "accuracy": 0.7853333333333333,
+        "loss": 0.2548371020555496,
+        "accuracy": 0.8773333333333333,
         "weighted_precision": 1.0,
-        "weighted_recall": 0.7853333333333333,
-        "weighted_f1_score": 0.8797610156833457
+        "weighted_recall": 0.8773333333333333,
+        "weighted_f1_score": 0.9346590909090909
     },
     "config": {
         "data_dir": "./data/processed",
