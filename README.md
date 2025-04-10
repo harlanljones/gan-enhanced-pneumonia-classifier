@@ -26,6 +26,59 @@ This project seeks to create realistic synthetic X-ray images of lungs with pneu
 Generative Adversarial Networks (GANs) have progressed synthetic image creation in medical imaging. Goodfellow et al. (2014) pioneered GANs, achieving lifelike image generation, though initial versions grappled with instability and poor quality [1]. Frid-Adar et al. (2018) employed GANs to enhance liver lesion datasets, boosting CNN accuracy, yet struggled with realism for intricate anatomies [2]. Yi et al. (2019) surveyed GANs in medical contexts, citing X-ray augmentation wins but underscoring problems with retaining diagnostic traits [3]. Kazeminia et al. (2020) evaluated GANs for medical image tasks, stressing X-ray synthesis promise while noting challenges in pathology-specific detail capture [4]. These works expose flaws in anatomical accuracy and feature retention—gaps we tackle with conditional generation and improved loss functions.
 
 ## 3. Approach
+
+The diagram below illustrates the overall workflow of the project, from data preparation to model training and analysis:
+
+```mermaid
+graph TD
+    subgraph "Data Preparation"
+        A["Raw RSNA Dataset"] --> B["download_dataset.py"]
+        B --> C["data/processed"]
+        C --> D["data_loader.py"]
+    end
+
+    subgraph "Baseline Training"
+        D --> E["Train Baseline<br>Classifier"]
+        E --> F["baseline_resnet50.pth"]
+        E --> G["Evaluate Baseline"]
+        G --> H["baseline_metrics.json"]
+    end
+
+    subgraph "GAN Training & Synthesis"
+        D --> I["Train DCGAN"]
+        I --> J["generator_final.pth"]
+        J --> K["Generate Synthetic<br>Images"]
+        K --> L["data/synthetic"]
+    end
+
+    subgraph "Augmented Training"
+        C --> M["Augmented Dataset"]
+        L --> M
+        M --> N["data_loader.py"]
+        N --> O["Train Augmented<br>Classifier"]
+        O --> P["augmented_resnet50.pth"]
+        O --> Q["Evaluate Augmented"]
+        Q --> R["augmented_metrics.json"]
+    end
+
+    subgraph "Analysis"
+        H --> S["Analyze Results"]
+        R --> S
+        S --> T["analysis/*"]
+    end
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#ccf,stroke:#333,stroke-width:1px
+    style L fill:#ccf,stroke:#333,stroke-width:1px
+    style M fill:#ccf,stroke:#333,stroke-width:1px
+    style F fill:#dfd,stroke:#333,stroke-width:1px
+    style J fill:#dfd,stroke:#333,stroke-width:1px
+    style P fill:#dfd,stroke:#333,stroke-width:1px
+    style H fill:#ff9,stroke:#333,stroke-width:1px
+    style R fill:#ff9,stroke:#333,stroke-width:1px
+    style T fill:#ff9,stroke:#333,stroke-width:1px
+```
+
 We will implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays. This is an unconditional GAN, meaning it learns to generate images representative of the training data distribution without explicit label input during generation. To improve training stability, we employ label smoothing for the real class in the discriminator (e.g., using labels of 0.9 instead of 1.0). We adapt the standard DCGAN architecture using `torch.nn.ConvTranspose2d` for the generator and `torch.nn.Conv2d` for the discriminator, trained with Binary Cross-Entropy loss. Synthetic images will be generated (targeting 5,000 additional samples), processed (resized to 224x224, normalized using ImageNet statistics), and combined with the original training set. A pre-trained ResNet-50 classifier (from `torchvision.models`) will then be fine-tuned on this augmented dataset using cross-entropy loss, with performance compared against a baseline trained on the original data alone. 
 
 ## 4. Dataset and Metrics
