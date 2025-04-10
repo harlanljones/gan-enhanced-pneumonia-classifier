@@ -1,0 +1,68 @@
+{
+    "average": {
+        "loss": 0.545941074069341,
+        "accuracy": 0.7326,
+        "weighted_precision": 1.0,
+        "weighted_recall": 0.7326,
+        "weighted_f1_score": 0.8381642703819381
+    },
+    "std_dev": {
+        "loss": 0.2822672917183167,
+        "accuracy": 0.13708106279781238,
+        "weighted_precision": 0.0,
+        "weighted_recall": 0.13708106279781238,
+        "weighted_f1_score": 0.09509808028635312
+    },
+    "folds": [
+        {
+            "loss": 0.6835810779730479,
+            "accuracy": 0.665,
+            "weighted_precision": 1.0,
+            "weighted_recall": 0.665,
+            "weighted_f1_score": 0.7987987987987989
+        },
+        {
+            "loss": 0.398511127948761,
+            "accuracy": 0.793,
+            "weighted_precision": 1.0,
+            "weighted_recall": 0.793,
+            "weighted_f1_score": 0.8845510317902955
+        },
+        {
+            "loss": 0.4323076304594676,
+            "accuracy": 0.771,
+            "weighted_precision": 1.0,
+            "weighted_recall": 0.771,
+            "weighted_f1_score": 0.870694522868436
+        },
+        {
+            "loss": 1.0182404766082764,
+            "accuracy": 0.5123333333333333,
+            "weighted_precision": 1.0,
+            "weighted_recall": 0.5123333333333333,
+            "weighted_f1_score": 0.6775402248181618
+        },
+        {
+            "loss": 0.1970650573571523,
+            "accuracy": 0.9216666666666666,
+            "weighted_precision": 1.0,
+            "weighted_recall": 0.9216666666666666,
+            "weighted_f1_score": 0.9592367736339983
+        }
+    ],
+    "config": {
+        "data_dir": "./data/processed",
+        "model_dir": "./models",
+        "results_dir": "./results/metrics",
+        "figures_dir": "./results/figures",
+        "epochs": 10,
+        "batch_size": 32,
+        "lr": 0.001,
+        "unfreeze": false,
+        "use_synthetic": false,
+        "synthetic_dir": "./data/synthetic",
+        "k_folds": 5,
+        "workers": 4,
+        "cpu": false
+    }
+}
