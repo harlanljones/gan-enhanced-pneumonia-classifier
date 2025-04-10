@@ -25,17 +25,17 @@ F1 Score:
 Cross-Validation Results:
 
 Accuracy:
-  Baseline:  0.7326 ± 0.1371
-  Augmented: 0.7255 ± 0.0750
+  Baseline:  0.7774 ± 0.0312
+  Augmented: 0.7314 ± 0.0744
 
 Precision:
   Baseline:  1.0000 ± 0.0000
   Augmented: 1.0000 ± 0.0000
 
 Recall:
-  Baseline:  0.7326 ± 0.1371
-  Augmented: 0.7255 ± 0.0750
+  Baseline:  0.7774 ± 0.0312
+  Augmented: 0.7314 ± 0.0744
 
 F1 Score:
-  Baseline:  0.8382 ± 0.0951
-  Augmented: 0.8387 ± 0.0495
+  Baseline:  0.8744 ± 0.0194
+  Augmented: 0.8428 ± 0.0470
