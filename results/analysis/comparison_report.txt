@@ -4,8 +4,8 @@ Final Test Set Performance:
 
 Accuracy:
   Baseline:  0.7947
-  Augmented: 0.8773
-  Change:    +10.4%
+  Augmented: 0.7293
+  Change:    -8.2%
 
 Precision:
   Baseline:  1.0000
@@ -14,13 +14,13 @@ Precision:
 
 Recall:
   Baseline:  0.7947
-  Augmented: 0.8773
-  Change:    +10.4%
+  Augmented: 0.7293
+  Change:    -8.2%
 
 F1 Score:
   Baseline:  0.8856
-  Augmented: 0.9347
-  Change:    +5.5%
+  Augmented: 0.8435
+  Change:    -4.8%
 
 Cross-Validation Results:
 

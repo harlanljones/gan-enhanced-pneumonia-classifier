@@ -96,7 +96,7 @@ def main(args):
     # --- Loss, Optimizers, Labels --- #
     criterion = nn.BCELoss()
     fixed_noise = torch.randn(args.vis_batch_size, args.latent_dim, 1, 1, device=device) # Smaller batch for vis
-    real_label = 1.
+    real_label = 0.9 # Use label smoothing for real images
     fake_label = 0.
     optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
     optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
