@@ -1,10 +1,10 @@
 {
     "metrics": {
-        "loss": 0.5083820442358653,
-        "accuracy": 0.7293333333333333,
+        "loss": 0.21457690870761872,
+        "accuracy": 0.909,
         "weighted_precision": 1.0,
-        "weighted_recall": 0.7293333333333333,
-        "weighted_f1_score": 0.843484965304549
+        "weighted_recall": 0.909,
+        "weighted_f1_score": 0.9523310633839707
     },
     "config": {
         "data_dir": "./data/processed",
@@ -12,13 +12,13 @@
         "results_dir": "./results/metrics",
         "figures_dir": "./results/figures",
         "epochs": 5,
-        "batch_size": 32,
+        "batch_size": 128,
         "lr": 0.001,
         "unfreeze": false,
         "use_synthetic": true,
         "synthetic_dir": "./data/synthetic",
         "k_folds": 0,
-        "workers": 4,
+        "workers": 16,
         "cpu": false
     }
 }
