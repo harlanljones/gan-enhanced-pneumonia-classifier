@@ -79,7 +79,20 @@ graph TD
     style T fill:#ff9,stroke:#333,stroke-width:1px
 ```
 
-We will implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays. This is an unconditional GAN, meaning it learns to generate images representative of the training data distribution without explicit label input during generation. To improve training stability, we employ label smoothing for the real class in the discriminator (e.g., using labels of 0.9 instead of 1.0). We adapt the standard DCGAN architecture using `torch.nn.ConvTranspose2d` for the generator and `torch.nn.Conv2d` for the discriminator, trained with Binary Cross-Entropy loss. Synthetic images will be generated (targeting 5,000 additional samples), processed (resized to 224x224, normalized using ImageNet statistics), and combined with the original training set. A pre-trained ResNet-50 classifier (from `torchvision.models`) will then be fine-tuned on this augmented dataset using cross-entropy loss, with performance compared against a baseline trained on the original data alone. 
+We implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays. Training stability is enhanced using label smoothing (real labels set to 0.9). The generator uses `torch.nn.ConvTranspose2d` and the discriminator uses `torch.nn.Conv2d`, trained with Binary Cross-Entropy loss. 
+
+**Augmentation Strategy:**
+We compare three training strategies for the classifier (a pre-trained ResNet-50 from `torchvision.models`):
+1.  **Baseline:** Trained only on the original dataset.
+2.  **Augmented:** Trained on the original dataset concatenated with all generated synthetic images (aiming for ~5,000).
+3.  **Curriculum:** Trained on a mix of original and synthetic data, where the proportion of synthetic data is gradually increased during training according to a defined schedule (e.g., 0% synthetic for epochs 0-4, 25% for epochs 5-9, 50% thereafter). This is controlled via the `--use-curriculum` and `--curriculum-schedule` arguments in `train_classifier.py`.
+
+All images (real and synthetic) are resized to 224x224 and normalized using ImageNet statistics. The classifier is fine-tuned using cross-entropy loss. Performance is evaluated using cross-validation and compared across the three strategies.
+
+**Synthetic Image Quality Analysis:**
+To assess the quality and impact of synthetic images, we perform additional analysis in `analyze_results.py`:
+*   **Structural Similarity Index (SSIM):** We calculate the average SSIM score between each synthetic image and a reference set of real pneumonia images. The distribution of these scores helps quantify the visual similarity.
+*   **Gradient-weighted Class Activation Mapping (Grad-CAM):** We generate Grad-CAM heatmaps for both baseline and augmented/curriculum models on sample images (real positive, real negative, synthetic). This visualizes which image regions the models focus on for classification, allowing comparison of attention patterns between models trained with and without synthetic data.
 
 ## 4. Dataset and Metrics
 The project utilizes the RSNA Pneumonia Detection Challenge dataset from Kaggle ([link](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge)), specifically using a pre-processed version available at ([link](https://www.kaggle.com/datasets/iamtapendu/rsna-pneumonia-processed-dataset)). This version includes metadata files (`stage2_train_metadata.csv`, `stage2_test_metadata.csv`) and corresponding PNG images located in `Training/Images/` and `Test/` directories within the download. The training metadata contains class labels ("Normal," "No Lung Opacity/Not Normal," "Lung Opacity"), while the test metadata uses a "PredictionString" format. The dataset comprises approximately 26,684 training images and 6,671 test images (actual numbers may vary slightly based on the metadata). Our `data_loader.py` script processes this structure, converting it into a binary classification task: "Lung Opacity" is mapped to label 1 (positive class), while all other classes ("Normal", "No Lung Opacity/Not Normal") are mapped to label 0 (negative class). Standard ImageNet normalization and resizing to 224x224 via `torchvision.transforms` are applied. Our primary metric is classification accuracy, aiming for over 85% on the test set, compared against a baseline ResNet-50's performance (initially around 80%). We also track weighted precision, recall, and F1-score to account for potential class imbalance. Validation is performed using 5-fold cross-validation by default, configurable via script arguments.
@@ -113,17 +126,18 @@ gan-enhanced-pneumonia-classifier/
 ├── notebooks/          # Jupyter notebooks for exploration and visualization
 │
 ├── results/
-│   ├── figures/        # Training curves and performance plots
+│   ├── figures/        # Training curves, CV plots, Ratio plots
 │   │   ├── baseline_*.png
-│   │   └── augmented_*.png
-│   ├── metrics/        # Training and evaluation metrics
-│   │   ├── training_history.json
-│   │   ├── final_evaluation_metrics.json
-│   │   ├── cv_summary_metrics.json
-│   │   └── gan_training_history.json
-│   ├── analysis/       # Analysis outputs
-│   │   ├── comparison_*.png       # Comparative visualizations
-│   │   └── comparison_report.txt  # Detailed performance report
+│   │   ├── augmented_*.png
+│   │   └── curriculum_*.png
+│   ├── metrics/        # Training and evaluation metrics JSON files
+│   │   ├── baseline_*.json
+│   │   ├── augmented_*.json
+│   │   └── curriculum_*.json
+│   ├── analysis/       # SSIM plots, Grad-CAM images, comparison reports
+│   │   ├── ssim_distribution.png
+│   │   ├── gradcam_*.png
+│   │   └── comparison_report.txt
 │   └── gan_images/     # GAN-generated sample images during training
 │
 ├── src/
@@ -215,6 +229,18 @@ Each component is designed to be modular and reusable, with clear separation of 
      chmod 600 ~/.kaggle/kaggle.json
      ```
 
+### Dependencies
+Install core dependencies:
+```bash
+pip install -r requirements.txt
+```
+This now includes `scikit-image` (for SSIM) and `grad-cam` (for Grad-CAM analysis).
+
+Ensure you have PyTorch with CUDA support if applicable:
+```bash
+pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+```
+
 ### Dataset Preparation
 
 1. **Download the dataset**
@@ -236,25 +262,11 @@ Each component is designed to be modular and reusable, with clear separation of 
 
 ### Training the Baseline Classifier
 
-**Basic training:**
+**Basic training (5-fold CV):**
 ```bash
-python src/train_classifier.py
+python src/train_classifier.py --k-folds 5
 ```
-
-**Available options:**
-```bash
---data-dir PATH      # Dataset directory (default: ./data/processed)
---model-dir PATH     # Model save directory (default: ./models)
---results-dir PATH   # Results directory (default: ./results/metrics)
---figures-dir PATH   # Figures directory (default: ./results/figures)
---epochs N          # Training epochs (default: 15)
---batch-size N      # Batch size (default: 32)
---lr FLOAT         # Learning rate (default: 0.001)
---unfreeze         # Unfreeze base ResNet layers
---k-folds N        # Cross-validation folds (default: 5)
---workers N        # Data loading workers (default: 4)
---cpu              # Force CPU usage
-```
+This saves metrics as `baseline_*.json` and model as `baseline_resnet50.pth` (or `fold_X_baseline_resnet50.pth` for CV).
 
 ### Training the GAN
 
@@ -301,43 +313,86 @@ python src/train_gan.py
    --cpu              # Force CPU usage
    ```
 
-### Training the Augmented Classifier
+### Training the Augmented Classifier (Simple Concatenation)
 
-1. **Train with synthetic data:**
-   ```bash
-   python src/train_classifier.py --use-synthetic
-   ```
+**Train with all synthetic data (5-fold CV):**
+```bash
+python src/train_classifier.py --use-synthetic --k-folds 5
+```
+This saves metrics as `augmented_*.json` and model as `augmented_resnet50.pth` (or `fold_X_augmented_resnet50.pth` for CV).
 
-2. **Advanced configuration:**
-   ```bash
-   python src/train_classifier.py \
-       --use-synthetic \
-       --synthetic-dir /path/to/synthetic/images \
-       --epochs 20 \
-       --batch-size 64 \
-       --lr 0.0005 \
-       --unfreeze \
-       --k-folds 5
-   ```
+### Training the Augmented Classifier (Curriculum Learning)
+
+**Train with phased synthetic data (5-fold CV):**
+```bash
+python src/train_classifier.py --use-synthetic --use-curriculum --k-folds 5
+```
+
+**Customize curriculum schedule (e.g., 0% up to epoch 3, 30% up to epoch 8, 60% thereafter):**
+```bash
+python src/train_classifier.py \
+    --use-synthetic \
+    --use-curriculum \
+    --curriculum-schedule \"0:0.0, 3:0.3, 8:0.6\" \
+    --k-folds 5 \
+    --epochs 20
+```
+This saves metrics as `curriculum_*.json` and model as `curriculum_resnet50.pth` (or `fold_X_curriculum_resnet50.pth` for CV).
+
+**Available options for `train_classifier.py`:**
+```bash
+--data-dir PATH      # Processed dataset directory (default: ./data/processed)
+--synthetic-dir PATH # Synthetic images directory (default: ./data/synthetic)
+--model-dir PATH     # Model save directory (default: ./models)
+--results-dir PATH   # Metrics save directory (default: ./results/metrics)
+--figures-dir PATH   # Figures save directory (default: ./results/figures)
+--epochs N          # Training epochs (default: 15)
+--batch-size N      # Batch size (default: 32)
+--lr FLOAT         # Learning rate (default: 0.001)
+--unfreeze         # Unfreeze base ResNet layers
+--k-folds N        # Cross-validation folds (default: 5, set to 1 for single run)
+--workers N        # Data loading workers (default: 4)
+--use-synthetic    # Enable synthetic data augmentation (required for curriculum)
+--use-curriculum   # Enable phased curriculum learning for synthetic data
+--curriculum-schedule STR # Define schedule, e.g., \"0:0.0,5:0.25,10:0.5\" (default: \"0:0.0, 5:0.25, 10:0.5\")
+--cpu              # Force CPU usage
+```
 
 ### Analyzing Results
 
-1. **Run analysis script:**
-   ```bash
-   python src/analyze_results.py
-   ```
+1.  **Run analysis script:**
+    ```bash
+    python src/analyze_results.py
+    ```
+    This script now performs several analyses:
+    *   Loads metrics for `baseline`, `augmented`, and `curriculum` runs (if JSON files exist).
+    *   Generates comparison plots for training curves (loss, accuracy, synthetic ratio) and CV results (accuracy, precision, recall, F1).
+    *   Generates a text summary report (`comparison_report.txt`) comparing final test and CV performance across runs.
+    *   Calculates and plots the SSIM distribution between synthetic images and real positive images (`ssim_distribution.png`).
+    *   Generates Grad-CAM comparison images (`gradcam_*.png`) for sample images across available models.
 
-2. **Available options:**
-   ```bash
-   --metrics-dir PATH  # Directory containing training metrics files (default: ./results/metrics)
-   --analysis-dir PATH # Output directory for analysis reports/figures (default: ./results/analysis)
-   ```
+2.  **Available options for `analyze_results.py`:**
+    ```bash
+    --metrics-dir PATH  # Metrics JSON files directory (default: ./results/metrics)
+    --analysis-dir PATH # Output directory for reports/plots (default: ./results/analysis)
+    --model-dir PATH    # Saved models directory (default: ./models)
+    --data-dir PATH     # Processed (real) data directory (default: ./data/processed)
+    --synthetic-dir PATH# Synthetic images directory (default: ./data/synthetic)
+    --num-ssim-real N   # Number of real positive images for SSIM ref (default: 100)
+    --num-ssim-synth N  # Number of synthetic images for SSIM calc (default: 500)
+    --num-gradcam-samples N # Samples per category for Grad-CAM (default: 3)
+    --cpu              # Force CPU for model loading/inference
+    --skip-plots       # Skip training/CV comparison plots
+    --skip-ssim        # Skip SSIM calculation
+    --skip-gradcam     # Skip Grad-CAM generation
+    ```
 
-3. **Generated outputs:**
-   - Comparative visualizations (`./results/analysis/comparison_*.png`)
-   - Performance report (`./results/analysis/comparison_report.txt`)
-   - Cross-validation analysis
-   - Training curves comparison
+3.  **Generated outputs (in `./results/analysis/`):**
+    *   `comparison_*.png`: Training curve comparisons.
+    *   `cv_comparison.png`: Bar plot comparing CV performance.
+    *   `comparison_report.txt`: Text summary of performance metrics.
+    *   `ssim_distribution.png`: Histogram of synthetic image SSIM scores.
+    *   `gradcam_*.png`: Grad-CAM visualizations for sample images.
 
 ## 7. References
 [1] Goodfellow, I., et al. (2014). Generative Adversarial Nets. *Advances in Neural Information Processing Systems*.

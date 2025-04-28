@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
+from torch.utils.data import DataLoader
 import numpy as np
 import time
 import os
@@ -12,17 +13,67 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import re # For parsing curriculum schedule
 
 # Project specific imports
-from data_loader import (get_dataloaders, get_kfold_dataloaders,
-                         get_augmented_dataloaders, get_augmented_kfold_dataloaders)
+from data_loader import (
+    get_dataloaders, get_kfold_dataloaders,
+    get_simple_augmented_dataloaders, get_simple_augmented_kfold_dataloaders, # Keep originals
+    get_phased_augmented_kfold_dataloaders, # New phased loader
+    PhasedAugmentedDataset # Import Dataset class if needed
+)
 from classifier import create_resnet50_baseline
+from utils import check_create_dir # Assuming check_create_dir is in utils.py
 
+# --- Curriculum Schedule Parsing ---
+def parse_curriculum_schedule(schedule_str: str) -> dict:
+    """Parses a curriculum schedule string (e.g., "0:0.0, 5:0.25, 10:0.5") into a dictionary."""
+    schedule = {}
+    if not schedule_str:
+        return schedule
+    try:
+        parts = schedule_str.split(',')
+        for part in parts:
+            epoch_str, ratio_str = part.strip().split(':')
+            epoch = int(epoch_str)
+            ratio = float(ratio_str)
+            if not (0 <= epoch):
+                 raise ValueError(f"Epoch must be non-negative: {epoch}")
+            if not (0.0 <= ratio <= 1.0):
+                raise ValueError(f"Ratio must be between 0.0 and 1.0: {ratio}")
+            schedule[epoch] = ratio
+        # Sort by epoch
+        schedule = dict(sorted(schedule.items()))
+        # Ensure epoch 0 has an entry if not explicitly provided
+        if 0 not in schedule:
+            schedule[0] = 0.0
+            schedule = dict(sorted(schedule.items())) # Re-sort
+        return schedule
+    except Exception as e:
+        raise ValueError(f"Invalid curriculum schedule format: '{schedule_str}'. Error: {e}. Expected format: 'epoch1:ratio1, epoch2:ratio2,...'")
+
+def get_current_synthetic_ratio(epoch: int, schedule: dict) -> float:
+    """Gets the synthetic ratio for the current epoch based on the schedule."""
+    if not schedule:
+        return 0.0 # Default to no synthetic data if no schedule
+
+    current_ratio = 0.0
+    # Find the latest epoch in the schedule that is less than or equal to the current epoch
+    applicable_epochs = [e for e in schedule.keys() if e <= epoch]
+    if applicable_epochs:
+        current_ratio = schedule[max(applicable_epochs)]
+    # Use ratio from epoch 0 if current epoch is before the first scheduled change
+    elif 0 in schedule:
+        current_ratio = schedule[0]
+
+    return current_ratio
+
+# --- Modified Training Function ---
 def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25, scheduler=None,
                 model_save_path='../models', results_save_path='../results/metrics',
-                fold=None, use_synthetic=False):
+                fold=None, use_synthetic=False, curriculum_schedule=None):
     """
-    Trains and validates the model.
+    Trains and validates the model, potentially using phased curriculum augmentation.
 
     Args:
         model (nn.Module): The model to train.
@@ -35,7 +86,9 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
         model_save_path (str): Directory to save model checkpoints.
         results_save_path (str): Directory to save training metrics.
         fold (int, optional): Current fold number if using K-Fold CV.
-        use_synthetic (bool): Whether synthetic data was used (for naming output files).
+        use_synthetic (bool): Indicates if *any* synthetic data is used (for naming/logic).
+        curriculum_schedule (dict, optional): Parsed schedule for phased augmentation {epoch: ratio}.
+                                           If None or empty, uses fixed augmentation if use_synthetic=True.
 
     Returns:
         tuple: (best_model_state, history)
@@ -45,18 +98,51 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
     since = time.time()
     best_model_wts = model.state_dict()
     best_acc = 0.0
-    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    history = {
+        'epoch': [],
+        'train_loss': [], 
+        'train_acc': [], 
+        'val_loss': [], 
+        'val_acc': [], 
+        'synthetic_ratio': []
+    }
 
-    os.makedirs(model_save_path, exist_ok=True)
-    os.makedirs(results_save_path, exist_ok=True)
+    check_create_dir(model_save_path)
+    check_create_dir(results_save_path)
 
     fold_prefix = f"fold_{fold}_" if fold is not None else ""
-    run_prefix = f"{fold_prefix}{'augmented' if use_synthetic else 'baseline'}_"
+    # Adjust prefix based on whether curriculum or simple augmentation is used
+    aug_type = "curriculum" if use_synthetic and curriculum_schedule else ("augmented" if use_synthetic else "baseline")
+    run_prefix = f"{fold_prefix}{aug_type}_"
+
+    # Get reference to the training dataset if using curriculum
+    train_dataset = None
+    if use_synthetic and curriculum_schedule and isinstance(dataloaders['train'], DataLoader) and hasattr(dataloaders['train'].dataset, 'set_synthetic_ratio'):
+        train_dataset = dataloaders['train'].dataset
+        print("Phased curriculum augmentation enabled.")
+    elif use_synthetic:
+        print("Simple concatenation augmentation enabled.")
+    else:
+        print("Baseline training (no synthetic data).")
 
     for epoch in range(num_epochs):
         epoch_start = time.time()
         print(f'Epoch {epoch+1}/{num_epochs}')
         print('-' * 10)
+
+        # Update synthetic ratio if using curriculum
+        current_ratio = 0.0
+        if train_dataset and curriculum_schedule:
+            current_ratio = get_current_synthetic_ratio(epoch, curriculum_schedule)
+            train_dataset.set_synthetic_ratio(current_ratio)
+        elif use_synthetic and not curriculum_schedule:
+            # If using simple augmentation, ratio is effectively determined by ConcatDataset size
+            # For tracking, we can consider it 1.0 or calculate actual proportion if needed
+            pass # No dynamic ratio change needed
+
+        history['epoch'].append(epoch + 1)  # Add epoch number (1-based)
+        history['synthetic_ratio'].append(current_ratio)
+        print(f"Current Synthetic Ratio: {current_ratio:.2f}")
 
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
@@ -70,7 +156,9 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
             all_labels = []
 
             # Use tqdm for progress bar
-            progress_bar = tqdm(dataloaders[phase], desc=f'{phase.capitalize()} Epoch {epoch+1}', leave=False)
+            data_loader = dataloaders[phase] # Use the correct key ('train' or 'val')
+            progress_bar = tqdm(data_loader, desc=f'{phase.capitalize()} Epoch {epoch+1}', leave=False)
+
             for inputs, labels in progress_bar:
                 inputs = inputs.to(device)
                 labels = labels.to(device)
@@ -98,7 +186,10 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
                 # Update progress bar
                 progress_bar.set_postfix(loss=loss.item())
 
-            epoch_loss = running_loss / len(dataloaders[phase].dataset)
+            # Calculate epoch loss and accuracy
+            # Need dataset size for the current phase
+            epoch_samples = len(data_loader.dataset)
+            epoch_loss = running_loss / epoch_samples
             epoch_acc = accuracy_score(all_labels, all_preds)
 
             history[f'{phase}_loss'].append(epoch_loss)
@@ -116,7 +207,6 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
                 print(f"Saved best model checkpoint to {best_model_filename}")
 
         if scheduler and phase == 'train': # Scheduler step usually after training phase or validation phase
-             # Example: scheduler.step() or scheduler.step(epoch_loss) if ReduceLROnPlateau
              scheduler.step() # Assuming StepLR or similar
 
         epoch_time = time.time() - epoch_start
@@ -228,97 +318,72 @@ def load_history(filepath, run_prefix):
         print(f"Warning: An error occurred loading {history_filename}: {e}")
         return None
 
-def plot_metric(histories, metric_key_base, title, ylabel, output_path, run_prefix=""):
-    """Plots a specific metric (loss or accuracy) for multiple training histories, optionally adding average lines for CV."""
-    plt.figure(figsize=(12, 7))
-    is_cv = len(histories) > 1
-    all_train_metrics = []
-    all_val_metrics = []
-    max_epochs = 0
-
-    # Color scheme
-    train_color = '#1f77b4'  # Blue
-    val_color = '#ff7f0e'    # Orange
-    avg_train_color = '#2ca02c'  # Green
-    avg_val_color = '#d62728'    # Red
-
-    for i, history in enumerate(histories):
-        if history:
-            train_key = f'train_{metric_key_base}'
-            val_key = f'val_{metric_key_base}'
+def plot_metric(histories, metric_key, title, ylabel, output_path, run_prefix="", plot_ratio=False):
+    """Plot training and validation metrics."""
+    plt.figure(figsize=(10, 6))
+    
+    # For storing metrics
+    train_metrics = []
+    val_metrics = []
+    
+    # Process each history
+    for history in histories:
+        if plot_ratio:
+            # For synthetic ratio plots
+            if 'synthetic_ratio' not in history:
+                continue
+            values = history['synthetic_ratio']
+            epochs = range(1, len(values) + 1)
+            plt.plot(epochs, values, alpha=0.3, color='blue',
+                    label=f'Fold {history.get("fold", "")}' if 'fold' in history else 'Ratio')
+            train_metrics.append(values)
+        else:
+            # For regular metric plots (loss, accuracy)
+            if metric_key not in history:
+                continue
             
-            if train_key in history and val_key in history and len(history[train_key]) > 0:
-                epochs = range(1, len(history[train_key]) + 1)
-                max_epochs = max(max_epochs, len(epochs))
-                
-                if is_cv:
-                    all_train_metrics.append(history[train_key])
-                    all_val_metrics.append(history[val_key])
-
-                # Plot individual lines with transparency for CV
-                alpha = 0.3 if is_cv else 1.0
-                plt.plot(epochs, history[train_key], 
-                        color=train_color, linestyle='-', alpha=alpha,
-                        label=f'{"Fold" if is_cv else "Run"} {i+1} Train')
-                plt.plot(epochs, history[val_key], 
-                        color=val_color, linestyle='--', alpha=alpha,
-                        label=f'{"Fold" if is_cv else "Run"} {i+1} Val')
-            else:
-                print(f"Warning: Missing keys '{train_key}' or '{val_key}' in history {i+1}")
-
-    # Add average lines if CV and data exists
-    if is_cv and all_train_metrics and all_val_metrics:
-        try:
-            max_len = max(len(m) for m in all_train_metrics + all_val_metrics)
-            padded_train = [m + [m[-1]]*(max_len - len(m)) for m in all_train_metrics]
-            padded_val = [m + [m[-1]]*(max_len - len(m)) for m in all_val_metrics]
-
-            mean_train = np.nanmean(np.array(padded_train), axis=0)
-            mean_val = np.nanmean(np.array(padded_val), axis=0)
-            std_train = np.nanstd(np.array(padded_train), axis=0)
-            std_val = np.nanstd(np.array(padded_val), axis=0)
-
-            epochs = range(1, max_len + 1)
+            train_values = history[metric_key]
+            val_key = f'val_{metric_key.split("train_")[1]}' if metric_key.startswith('train_') else f'val_{metric_key}'
+            val_values = history.get(val_key, [])
             
-            # Plot mean lines
-            plt.plot(epochs, mean_train, color=avg_train_color, 
-                    linestyle='-', linewidth=2, label='Average Train')
-            plt.plot(epochs, mean_val, color=avg_val_color, 
-                    linestyle='--', linewidth=2, label='Average Val')
-
-            # Add confidence intervals
-            plt.fill_between(epochs, 
-                           mean_train - std_train, 
-                           mean_train + std_train, 
-                           color=avg_train_color, alpha=0.1)
-            plt.fill_between(epochs, 
-                           mean_val - std_val, 
-                           mean_val + std_val, 
-                           color=avg_val_color, alpha=0.1)
-        except Exception as e:
-            print(f"Warning: Could not calculate or plot average lines: {e}")
-
-    plt.title(title)
+            epochs = range(1, len(train_values) + 1)
+            
+            plt.plot(epochs, train_values, alpha=0.3, color='blue',
+                    label=f'Train Fold {history.get("fold", "")}' if 'fold' in history else 'Training')
+            if val_values:
+                plt.plot(epochs, val_values, alpha=0.3, color='orange',
+                        label=f'Val Fold {history.get("fold", "")}' if 'fold' in history else 'Validation')
+            
+            train_metrics.append(train_values)
+            if val_values:
+                val_metrics.append(val_values)
+    
+    if not train_metrics:
+        raise ValueError(f"No valid data found for metric: {metric_key}")
+    
+    # Plot average lines
+    epochs = range(1, len(train_metrics[0]) + 1)  # Assume all histories have same length after padding
+    
+    if plot_ratio:
+        ratio_avg = np.mean(train_metrics, axis=0)
+        plt.plot(epochs, ratio_avg, 'b-', label='Average Ratio', linewidth=2)
+    else:
+        train_avg = np.mean(train_metrics, axis=0)
+        plt.plot(epochs, train_avg, 'b-', label='Average Training', linewidth=2)
+        
+        if val_metrics:
+            val_avg = np.mean(val_metrics, axis=0)
+            plt.plot(epochs, val_avg, 'orange', label='Average Validation', linewidth=2)
+    
+    plt.title(f'{title} - {run_prefix}' if run_prefix else title)
     plt.xlabel('Epoch')
     plt.ylabel(ylabel)
-    
-    if max_epochs > 0:
-        plt.xlim(1, max_epochs)
-        if 'acc' in metric_key_base.lower():
-            plt.ylim(0, 1.05)
-    
-    # Always place legend outside if CV or if there are averages
-    if is_cv or (is_cv and len(histories) > 1): # simplified condition
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
-    elif len(histories) == 1:
-        plt.legend(loc='best')
-    
-    plt.grid(True, linestyle='--', alpha=0.3)
-    plt.tight_layout(rect=[0, 0, 0.85, 1] if is_cv else [0, 0, 1, 1]) # Adjust layout for external legend
-    plt.savefig(os.path.join(output_path, f"{run_prefix}{metric_key_base}_curves.png"))
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches='tight')
     plt.close()
-    print(f"Saved {metric_key_base} plot to {output_path}")
-
+    print(f"Saved {output_path}")
 
 def plot_cv_summary(cv_summary_path, output_dir, run_prefix):
     """Plots the summary of cross-validation results from a JSON file."""
@@ -427,65 +492,72 @@ def plot_cv_summary(cv_summary_path, output_dir, run_prefix):
     print(f"Saved CV summary plot to {os.path.join(output_dir, f'{run_prefix}cv_metrics_summary.png')}")
 
 
-def generate_plots(metrics_dir, figures_dir, use_synthetic=False, k_folds=5):
-    """
-    Generates loss and accuracy plots from saved training history files.
-    If k_folds > 0, generates plots for each fold and an average plot, plus a CV summary plot.
-    If k_folds == 0, generates a single plot for the standard train/test run.
+def generate_plots(metrics_dir, figures_dir, run_prefix="", k_folds=None):
+    """Generates training plots for a given run (baseline, augmented, curriculum) or CV folds."""
+    check_create_dir(figures_dir)
+    histories = []
 
-    Args:
-        metrics_dir (str): Directory containing the training history JSON files.
-        figures_dir (str): Directory to save the generated plots.
-        use_synthetic (bool): Whether synthetic data was used (for file naming).
-        k_folds (int): Number of folds used during training (0 for no CV).
-    """
-    os.makedirs(figures_dir, exist_ok=True)
-    print(f"\nGenerating plots in {figures_dir}...")
-
-    run_prefix_base = "augmented_" if use_synthetic else "baseline_"
-
-    if k_folds > 0:
-        fold_histories = []
-        for i in range(k_folds):
-            fold_run_prefix = f"fold_{i}_{run_prefix_base}"
+    if k_folds and k_folds > 1:
+        print(f"Generating plots for {k_folds}-Fold CV run: {run_prefix}...")
+        for fold in range(1, k_folds + 1):  # Folds are 1-based in filenames
+            fold_run_prefix = f"fold_{fold}_{run_prefix}"
             history = load_history(metrics_dir, fold_run_prefix)
             if history:
-                fold_histories.append(history)
-            else:
-                print(f"Warning: Could not load history for fold {i} with prefix {fold_run_prefix}")
-
-        if fold_histories:
-            print(f"Plotting average metrics across {len(fold_histories)} folds...")
-            plot_metric(fold_histories, 'loss', f'Avg Train/Val Loss ({run_prefix_base[:-1]}, CV)', 'Loss', figures_dir, run_prefix=f"avg_{run_prefix_base}")
-            plot_metric(fold_histories, 'acc', f'Avg Train/Val Accuracy ({run_prefix_base[:-1]}, CV)', 'Accuracy', figures_dir, run_prefix=f"avg_{run_prefix_base}")
-
-            # Generate CV summary plot
-            plot_cv_summary(metrics_dir, figures_dir, run_prefix=run_prefix_base)
-        else:
-            print("No valid fold histories found to generate average plots.")
-
-    else: # No cross-validation (k_folds == 0)
-        history = load_history(metrics_dir, run_prefix_base)
+                # Add fold number to history for reference
+                history['fold'] = fold
+                histories.append(history)
+        if not histories:
+            print(f"No history files found for CV run prefix: {run_prefix}")
+            return
+    else:
+        print(f"Generating plots for single run: {run_prefix}...")
+        history = load_history(metrics_dir, run_prefix)
         if history:
-            print(f"Plotting metrics for single run ({run_prefix_base[:-1]})...")
-            plot_metric([history], 'loss', f'Train/Val Loss ({run_prefix_base[:-1]})', 'Loss', figures_dir, run_prefix=run_prefix_base)
-            plot_metric([history], 'acc', f'Train/Val Accuracy ({run_prefix_base[:-1]})', 'Accuracy', figures_dir, run_prefix=run_prefix_base)
+            histories.append(history)
         else:
-            print(f"No history file found for prefix {run_prefix_base} in {metrics_dir} for single run.")
+            print(f"No history file found for run prefix: {run_prefix}")
+            return
 
-    print(f"--- Plot Generation Complete ---")
+    # Plot Loss
+    try:
+        plot_metric(histories, 'train_loss', 'Training Loss', 'Loss',
+                    os.path.join(figures_dir, f'{run_prefix}loss_curve.png'), run_prefix)
+    except Exception as e:
+        print(f"Warning: Could not generate loss plot: {e}")
+
+    # Plot Accuracy
+    try:
+        plot_metric(histories, 'train_acc', 'Training Accuracy', 'Accuracy',
+                    os.path.join(figures_dir, f'{run_prefix}accuracy_curve.png'), run_prefix)
+    except Exception as e:
+        print(f"Warning: Could not generate accuracy plot: {e}")
+
+    # Plot Synthetic Ratio if present
+    if histories and any('synthetic_ratio' in h for h in histories):
+        try:
+            plot_metric(histories, 'synthetic_ratio', 'Synthetic Data Ratio', 'Ratio',
+                       os.path.join(figures_dir, f'{run_prefix}synthetic_ratio_curve.png'),
+                       run_prefix, plot_ratio=True)
+        except Exception as e:
+            print(f"Warning: Could not generate synthetic ratio plot: {e}")
+
+    # Plot CV Summary Bar Chart if applicable
+    if k_folds and k_folds > 1:
+        cv_summary_path = os.path.join(metrics_dir, f"{run_prefix}cv_summary.json")
+        if os.path.exists(cv_summary_path):
+            try:
+                plot_cv_summary(metrics_dir, figures_dir, run_prefix)  # Pass metrics_dir instead of cv_summary_path
+            except Exception as e:
+                print(f"Warning: Could not generate CV summary plots: {e}")
+        else:
+            print(f"CV Summary file not found: {cv_summary_path}")
 
 
-# --- End of Plotting Functions ---
-
-
+# --- Modified Main Function ---
 def main(args):
-    """Main function to orchestrate training, evaluation, and plotting.
+    print("Starting Classifier Training...")
+    print(f"Args: {args}")
     
-    Supports both standard training and training with synthetic data augmentation.
-    When using synthetic data (--use-synthetic), the training set is augmented with
-    generated images while validation and test sets remain unchanged to ensure fair evaluation.
-    """
     # Setup device
     if args.cpu:
         device = torch.device("cpu")
@@ -493,255 +565,240 @@ def main(args):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Ensure results and model directories exist
-    os.makedirs(args.model_dir, exist_ok=True)
-    os.makedirs(args.results_dir, exist_ok=True)
+    # --- Data Loading --- #
+    fold_dataloaders_list = None
+    test_loader = None
+    train_loader = None # For non-CV case
+    is_cv = args.k_folds > 1
 
-    # Print run configuration
-    print("\n=== Training Configuration ===")
-    print(f"{'Using synthetic data:':25} {'Yes' if args.use_synthetic else 'No'}")
-    if args.use_synthetic:
-        print(f"{'Synthetic data directory:':25} {args.synthetic_dir}")
-    print(f"{'Cross-validation:':25} {'Yes (' + str(args.k_folds) + ' folds)' if args.k_folds > 0 else 'No'}")
-    print(f"{'Base model:':25} ResNet50 ({'fine-tuned' if args.unfreeze else 'feature extraction'})")
-    print(f"{'Training epochs:':25} {args.epochs}")
-    print(f"{'Batch size:':25} {args.batch_size}")
-    print(f"{'Learning rate:':25} {args.lr}")
-    print("="*30 + "\n")
+    curriculum_schedule = None
+    if args.use_curriculum:
+        if not args.use_synthetic:
+             print("Warning: --use-curriculum specified without --use-synthetic. Curriculum schedule ignored.")
+        else:
+            try:
+                curriculum_schedule = parse_curriculum_schedule(args.curriculum_schedule)
+                print(f"Parsed curriculum schedule: {curriculum_schedule}")
+                if not curriculum_schedule:
+                     print("Warning: --use-curriculum specified but schedule is empty or invalid. Using simple augmentation.")
+                     args.use_curriculum = False # Fallback to simple augmentation
+            except ValueError as e:
+                print(f"Error parsing curriculum schedule: {e}. Aborting.")
+                return
 
-    criterion = nn.CrossEntropyLoss()
+    # Determine run prefix early for consistent naming
+    aug_type = "curriculum" if args.use_synthetic and args.use_curriculum and curriculum_schedule else ("augmented" if args.use_synthetic else "baseline")
+    base_run_prefix = f"{aug_type}_"
 
-    # Load data with appropriate loader based on configuration
-    print("\n=== Loading Dataset ===")
     try:
-        if args.k_folds > 0:
+        if is_cv:
+            print(f"Loading data for {args.k_folds}-Fold Cross Validation...")
             if args.use_synthetic:
-                print("Loading data for cross-validation with synthetic augmentation...")
-                fold_dataloaders, test_loader = get_augmented_kfold_dataloaders(
-                    data_dir=args.data_dir,
-                    synthetic_dir=args.synthetic_dir,
-                    k_folds=args.k_folds,
-                    batch_size=args.batch_size,
-                    num_workers=args.workers
+                if args.use_curriculum and curriculum_schedule:
+                    print("Using Phased Augmented K-Fold DataLoaders...")
+                    initial_ratio = get_current_synthetic_ratio(0, curriculum_schedule)
+                    fold_dataloaders_list, test_loader = get_phased_augmented_kfold_dataloaders(
+                        data_dir=args.data_dir, synthetic_dir=args.synthetic_dir,
+                        k_folds=args.k_folds, batch_size=args.batch_size, num_workers=args.workers,
+                        initial_synthetic_ratio=initial_ratio
+                    )
+                else:
+                    print("Using Simple Augmented K-Fold DataLoaders...")
+                    fold_dataloaders_list, test_loader = get_simple_augmented_kfold_dataloaders(
+                        data_dir=args.data_dir, synthetic_dir=args.synthetic_dir,
+                        k_folds=args.k_folds, batch_size=args.batch_size, num_workers=args.workers
                 )
             else:
-                print("Loading data for standard cross-validation...")
-                fold_dataloaders, test_loader = get_kfold_dataloaders(
-                    data_dir=args.data_dir,
-                    k_folds=args.k_folds,
-                    batch_size=args.batch_size,
-                    num_workers=args.workers
+                print("Using Baseline K-Fold DataLoaders...")
+                fold_dataloaders_list, test_loader = get_kfold_dataloaders(
+                    data_dir=args.data_dir, k_folds=args.k_folds,
+                    batch_size=args.batch_size, num_workers=args.workers
                 )
         else:
+            print("Loading data for single Train/Test split...")
             if args.use_synthetic:
-                print("Loading data for single run with synthetic augmentation...")
-                train_loader, test_loader = get_augmented_dataloaders(
-                    data_dir=args.data_dir,
-                    synthetic_dir=args.synthetic_dir,
-                    batch_size=args.batch_size,
-                    num_workers=args.workers
+                 if args.use_curriculum:
+                      print("Warning: Curriculum learning typically uses K-Fold CV. Running on single split.")
+                      # Need a non-CV version of phased loader or adapt CV version
+                      # For simplicity, let's fall back to simple augmentation for non-CV curriculum for now
+                      print("Falling back to Simple Augmented DataLoaders for non-CV curriculum run...")
+                      train_loader, test_loader = get_simple_augmented_dataloaders(
+                          data_dir=args.data_dir, synthetic_dir=args.synthetic_dir,
+                          batch_size=args.batch_size, num_workers=args.workers
+                      )
+                 else:
+                      print("Using Simple Augmented DataLoaders...")
+                      train_loader, test_loader = get_simple_augmented_dataloaders(
+                          data_dir=args.data_dir, synthetic_dir=args.synthetic_dir,
+                          batch_size=args.batch_size, num_workers=args.workers
                 )
             else:
-                print("Loading data for standard single run...")
-                train_loader, test_loader = get_dataloaders(
-                    data_dir=args.data_dir,
-                    batch_size=args.batch_size,
-                    num_workers=args.workers
-                )
+                print("Using Baseline DataLoaders...")
+                # Assuming get_dataloaders provides a dict {'train': loader, 'val': loader} or similar
+                # Let's assume get_dataloaders returns train_loader, test_loader directly
+                # We might need a validation split for non-CV training
+                # TEMPORARY: Use test set as validation for non-CV run - NEEDS REVISION
+                print("Warning: Using test set as validation for non-CV run. Create a proper validation split.")
+                _train_loader, _test_loader = get_dataloaders(args.data_dir, batch_size=args.batch_size, num_workers=args.workers)
+                dataloaders = {'train': _train_loader, 'val': _test_loader}
+                test_loader = _test_loader # Keep separate test loader if needed later
+
     except FileNotFoundError as e:
-        print(f"\nError: {e}")
-        print("Please ensure both the original dataset and (if using) synthetic images are available.")
+        print(f"Error loading data: {e}")
         return
     except Exception as e:
-        print(f"\nError loading data: {e}")
+        print(f"An unexpected error occurred during data loading: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
-    print("Data loading completed successfully.")
-    print("="*30 + "\n")
+    # --- Model Training & Evaluation --- #
+    all_fold_histories = []
+    all_fold_metrics = []
 
-    if args.k_folds > 0:
-        print(f"\n=== Starting {args.k_folds}-Fold Cross Validation ===")
-        if test_loader is None:
-            print("ERROR: Test loader could not be created. Check test data directory and structure.")
-            return
+    if is_cv:
+        for fold in range(args.k_folds):
+            print(f"\n===== Fold {fold + 1} / {args.k_folds} =====")
+            model = create_resnet50_baseline(num_classes=2, freeze_base=not args.unfreeze).to(device)
+            optimizer = optim.Adam(model.parameters(), lr=args.lr)
+            criterion = nn.CrossEntropyLoss()
+            # Optional: LR scheduler
+            # exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
-        all_fold_histories = []
-        test_metrics_per_fold = []
-        best_fold_val_acc = -1
-        best_model_state_overall = None
+            # Get dataloaders for the current fold
+            # Adjust based on whether phased loader returns dict with 'train_loader' or just loaders
+            current_fold_loaders = {}
+            if args.use_curriculum and args.use_synthetic and curriculum_schedule:
+                 current_fold_loaders = {
+                     'train': fold_dataloaders_list[fold]['train_loader'],
+                     'val': fold_dataloaders_list[fold]['val_loader']
+                 }
+            else:
+                 current_fold_loaders = fold_dataloaders_list[fold] # Assumes dict {'train':..., 'val':...}
 
-        for i, fold_data in enumerate(fold_dataloaders):
-            print(f"\n{'='*20} Fold {i+1}/{args.k_folds} {'='*20}")
-            
-            # Create a new model instance for each fold
-            model = create_resnet50_baseline(num_classes=2, pretrained=True, freeze_base=not args.unfreeze)
-            model = model.to(device)
-
-            print(f"Training fold {i+1} with {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
-
-            # Setup optimizer
-            params_to_optimize = model.parameters() if args.unfreeze else model.fc.parameters()
-            optimizer = optim.Adam(params_to_optimize, lr=args.lr)
-            scheduler = None
-
-            # Train the model for this fold
+            # Pass curriculum schedule to train_model
             fold_model, fold_history = train_model(
-                model, criterion, optimizer, fold_data, device, args.epochs, scheduler,
-                args.model_dir, args.results_dir, fold=i+1, use_synthetic=args.use_synthetic
+                model, criterion, optimizer, current_fold_loaders, device,
+                num_epochs=args.epochs, scheduler=None, # exp_lr_scheduler,
+                model_save_path=args.model_dir, results_save_path=args.results_dir,
+                fold=(fold + 1), use_synthetic=args.use_synthetic, curriculum_schedule=curriculum_schedule
             )
             all_fold_histories.append(fold_history)
 
-            # Evaluate on test set
-            print(f"\n--- Evaluating Fold {i+1} Best Model on Test Set ---")
+            # Evaluate on the held-out test set after each fold training
+            print(f"\n--- Evaluating Fold {fold + 1} Model on Test Set ---")
             fold_test_metrics = evaluate_model(fold_model, test_loader, device, criterion)
-            test_metrics_per_fold.append(fold_test_metrics)
+            all_fold_metrics.append(fold_test_metrics)
+            print("-" * 30)
 
-            # Track best model
-            current_best_val_acc = max(fold_history['val_acc'])
-            if current_best_val_acc > best_fold_val_acc:
-                best_fold_val_acc = current_best_val_acc
-                best_model_state_overall = fold_model.state_dict()
-                model_prefix = 'augmented' if args.use_synthetic else 'baseline'
-                overall_best_path = os.path.join(args.model_dir, f'best_overall_{model_prefix}_resnet50.pth')
-                torch.save(best_model_state_overall, overall_best_path)
-                print(f"New best model (val_acc={best_fold_val_acc:.4f}) from fold {i+1}")
-                print(f"Saved to {overall_best_path}")
+        # --- CV Aggregation & Final Saving --- # 
+        # Calculate average and std dev of metrics across folds
+        avg_metrics = {key: np.mean([m[key] for m in all_fold_metrics]) for key in all_fold_metrics[0]}
+        std_metrics = {key: np.std([m[key] for m in all_fold_metrics]) for key in all_fold_metrics[0]}
 
-        # Print cross-validation summary
-        print("\n=== Cross-Validation Summary ===")
-        avg_test_metrics = {
-            key: np.mean([m[key] for m in test_metrics_per_fold])
-            for key in test_metrics_per_fold[0].keys()
-        }
-        std_test_metrics = {
-            key: np.std([m[key] for m in test_metrics_per_fold])
-            for key in test_metrics_per_fold[0].keys()
+        cv_summary = {
+            'folds': all_fold_metrics,
+            'average': avg_metrics,
+            'std_dev': std_metrics
         }
 
-        print("\nAverage Test Metrics across folds:")
-        for metric in ['loss', 'accuracy', 'weighted_precision', 'weighted_recall', 'weighted_f1_score']:
-            print(f"  {metric.replace('_', ' ').title():20}: {avg_test_metrics[metric]:.4f} ± {std_test_metrics[metric]:.4f}")
+        print("\n===== Cross-Validation Summary =====")
+        for key in avg_metrics:
+            print(f"Average {key}: {avg_metrics[key]:.4f} +/- {std_metrics[key]:.4f}")
 
         # Save CV summary
-        run_prefix = "augmented_" if args.use_synthetic else "baseline_"
-        cv_results_path = os.path.join(args.results_dir, f'{run_prefix}cv_summary.json')
-        summary_data = {
-            'average': avg_test_metrics,
-            'std_dev': std_test_metrics,
-            'folds': test_metrics_per_fold,
-            'config': vars(args)
-        }
-        with open(cv_results_path, 'w') as f:
-            json.dump(summary_data, f, indent=4)
-        print(f"\nSaved detailed CV summary to {cv_results_path}")
+        cv_summary_filename = os.path.join(args.results_dir, f'{base_run_prefix}cv_summary.json')
+        with open(cv_summary_filename, 'w') as f:
+            json.dump(cv_summary, f, indent=4)
+        print(f"Saved CV summary to {cv_summary_filename}")
 
-    else:
-        print("\n=== Starting Single Train/Test Run ===")
-        if test_loader is None:
-            print("ERROR: Test loader could not be created. Check test data directory and structure.")
-            return
+        # Generate CV plots
+        print("\nGenerating CV plots...")
+        generate_plots(args.results_dir, args.figures_dir, run_prefix=base_run_prefix, k_folds=args.k_folds)
 
-        model = create_resnet50_baseline(num_classes=2, pretrained=True, freeze_base=not args.unfreeze)
-        model = model.to(device)
+    else: # Single run (non-CV)
+        print("\n===== Starting Single Training Run =====")
+        model = create_resnet50_baseline(num_classes=2, freeze_base=not args.unfreeze).to(device)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        criterion = nn.CrossEntropyLoss()
+        # scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
-        print(f"Training model with {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
-
-        params_to_optimize = model.parameters() if args.unfreeze else model.fc.parameters()
-        optimizer = optim.Adam(params_to_optimize, lr=args.lr)
-        scheduler = None
-
-        dataloaders = {'train': train_loader, 'val': test_loader}
-
-        best_model, history = train_model(
-            model, criterion, optimizer, dataloaders, device, args.epochs, scheduler,
-            args.model_dir, args.results_dir, fold=None, use_synthetic=args.use_synthetic
+        # Pass curriculum schedule (even if None/empty)
+        final_model, history = train_model(
+            model, criterion, optimizer, dataloaders, device,
+            num_epochs=args.epochs, scheduler=None, # scheduler,
+            model_save_path=args.model_dir, results_save_path=args.results_dir,
+            fold=None, use_synthetic=args.use_synthetic, curriculum_schedule=curriculum_schedule
         )
 
-        print("\n=== Final Evaluation on Test Set ===")
-        final_metrics = evaluate_model(best_model, test_loader, device, criterion)
+        print("\n--- Evaluating Final Model on Test Set ---")
+        final_metrics = evaluate_model(final_model, test_loader, device, criterion)
 
-        # Save final metrics with configuration
-        run_prefix = "augmented_" if args.use_synthetic else "baseline_"
-        final_metrics_path = os.path.join(args.results_dir, f'{run_prefix}final_metrics.json')
-        final_results = {
-            'metrics': final_metrics,
-            'config': vars(args)
+        # Save final metrics
+        metrics_data = {
+            'config': vars(args),
+            'metrics': final_metrics
         }
-        with open(final_metrics_path, 'w') as f:
-            json.dump(final_results, f, indent=4)
-        print(f"\nSaved final evaluation results to {final_metrics_path}")
+        final_metrics_filename = os.path.join(args.results_dir, f'{base_run_prefix}final_metrics.json')
+        with open(final_metrics_filename, 'w') as f:
+            json.dump(metrics_data, f, indent=4)
+        print(f"Saved final metrics to {final_metrics_filename}")
 
-    # Generate plots
-    print("\n=== Generating Performance Plots ===")
-    try:
-        generate_plots(args.results_dir, args.figures_dir, args.use_synthetic, args.k_folds)
-        print("Plot generation completed successfully.")
-    except ImportError:
-        print("\nWarning: Matplotlib not found. Skipping plot generation.")
-        print("Install matplotlib to generate plots: pip install matplotlib")
-    except Exception as e:
-        print(f"\nError during plot generation: {e}")
+        # Generate plots for single run
+        print("\nGenerating plots for single run...")
+        generate_plots(args.results_dir, args.figures_dir, run_prefix=base_run_prefix, k_folds=None)
 
-    print("\n=== Training Complete ===")
+    print("\nClassifier training script finished.")
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='''
-    Train ResNet50 Classifier for Pneumonia Detection
+    parser = argparse.ArgumentParser(description='Train ResNet50 Classifier for Pneumonia Detection')
     
-    This script supports both standard training and training with synthetic data augmentation.
-    When using synthetic data (--use-synthetic), the training set is augmented while validation
-    and test sets remain unchanged to ensure fair evaluation.
-    ''')
-    
-    # Data and output directories
+    # Data & Paths
     parser.add_argument('--data-dir', type=str, default='./data/processed',
-                        help='Path to the processed dataset directory')
-    parser.add_argument('--model-dir', type=str, default='./models',
-                        help='Directory to save model checkpoints')
-    parser.add_argument('--results-dir', type=str, default='./results/metrics',
-                        help='Directory to save metrics and evaluation results')
-    parser.add_argument('--figures-dir', type=str, default='./results/figures',
-                        help='Directory to save performance plots')
-    
-    # Training parameters
-    parser.add_argument('--epochs', type=int, default=15,
-                        help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=32,
-                        help='Training batch size')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='Learning rate')
-    parser.add_argument('--unfreeze', action='store_true',
-                        help='Unfreeze and fine-tune all ResNet layers (default: only train FC layer)')
-    
-    # Synthetic data options
-    parser.add_argument('--use-synthetic', action='store_true',
-                        help='Augment training data with synthetic images')
+                        help='Path to the processed dataset directory (default: ./data/processed)')
     parser.add_argument('--synthetic-dir', type=str, default='./data/synthetic',
-                        help='Directory containing synthetic images (used with --use-synthetic)')
+                        help='Path to the directory containing synthetic images (default: ./data/synthetic)')
+    parser.add_argument('--model-dir', type=str, default='./models',
+                        help='Directory to save model checkpoints (default: ./models)')
+    parser.add_argument('--results-dir', type=str, default='./results/metrics',
+                        help='Directory to save training history and metrics (default: ./results/metrics)')
+    parser.add_argument('--figures-dir', type=str, default='./results/figures',
+                        help='Directory to save generated plots (default: ./results/figures)')
     
-    # Cross-validation options
+    # Training Hyperparameters
+    parser.add_argument('--epochs', type=int, default=15, help='Number of training epochs (default: 15)')
+    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training and evaluation (default: 32)')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate for Adam optimizer (default: 0.001)')
+    parser.add_argument('--unfreeze', action='store_true', help='Unfreeze base ResNet layers for fine-tuning')
+    
+    # Cross-Validation
     parser.add_argument('--k-folds', type=int, default=5,
-                        help='Number of folds for cross-validation (0 to disable)')
+                        help='Number of folds for cross-validation. Set to 1 for single train/test split (default: 5)')
     
-    # Hardware options
+    # Data Loading
     parser.add_argument('--workers', type=int, default=4,
-                        help='Number of data loading workers')
-    parser.add_argument('--cpu', action='store_true',
-                        help='Force CPU usage even if CUDA is available')
+                        help='Number of data loading workers (processes) (default: 4)')
+
+    # Augmentation Strategy
+    parser.add_argument('--use-synthetic', action='store_true',
+                        help='Use synthetic data augmentation (simple concatenation or curriculum)')
+    parser.add_argument('--use-curriculum', action='store_true',
+                        help='Use phased curriculum learning for synthetic data (requires --use-synthetic)')
+    parser.add_argument('--curriculum-schedule', type=str, default="0:0.0, 5:0.25, 10:0.5",
+                        help='Schedule for curriculum learning as \"epoch1:ratio1,epoch2:ratio2,...". Example: \"0:0.0,5:0.25,10:0.5\" (default: \"0:0.0, 5:0.25, 10:0.5\")')
+
+    # Device
+    parser.add_argument('--cpu', action='store_true', help='Force CPU usage even if CUDA is available')
 
     args = parser.parse_args()
 
-    # Validate k-folds argument
-    if args.k_folds <= 1:
-        args.k_folds = 0
-        print("Note: k_folds <= 1, disabling cross-validation")
-
-    # Check dependencies
-    try:
-        import matplotlib.pyplot as plt
-        import numpy
-    except ImportError as e:
-        print(f"Warning: Missing plotting dependency ({e})")
-        print("Install required packages: pip install matplotlib numpy")
+    # --- Basic Validation --- #
+    if args.k_folds < 1:
+        print("Error: k-folds must be at least 1.")
+        exit()
+    if args.use_curriculum and not args.use_synthetic:
+        print("Warning: --use-curriculum requires --use-synthetic. Ignoring curriculum schedule.")
+        args.use_curriculum = False
 
     main(args)
