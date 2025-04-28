@@ -1,21 +1,19 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
-import torchvision.models as models
-from torch.utils.data import DataLoader
-import json
-import os
-from tqdm import tqdm
+import torchvision.utils as vutils
 import numpy as np
+import os
 import argparse
 import time
+import json # Added for saving history
+from tqdm import tqdm
 import matplotlib
 matplotlib.use('Agg') # Use Agg backend for non-interactive plotting
 import matplotlib.pyplot as plt # Added for plotting
 
 # Project specific imports
-from data_loader import RSNAPneumoniaDataset, data_transforms
+from data_loader import get_dataloaders # Assuming get_dataloaders can provide just the train loader
 from dcgan import Generator, Discriminator, weights_init
 
 # --- Plotting Function --- Moved from classifier and adapted
@@ -23,38 +21,23 @@ def plot_gan_losses(history, output_path):
     """Plots Generator and Discriminator losses from training history."""
     plt.figure(figsize=(12, 6))
 
-    # Use epoch-level losses instead of iteration-level
-    epochs = range(1, len(history.get('G_losses_epoch', [])) + 1)
-    g_losses = history.get('G_losses_epoch', [])
-    d_losses = history.get('D_losses_epoch', [])
-    perceptual_losses = history.get('perceptual_losses', [])
-    fm_losses = history.get('feature_matching_losses', [])
+    iters = range(len(history.get('G_losses_iter', [])))
+    g_losses = history.get('G_losses_iter', [])
+    d_losses = history.get('D_losses_iter', [])
 
-    if not epochs or not g_losses or not d_losses:
+    if not iters or not g_losses or not d_losses:
         print("Warning: Loss data missing or empty in history. Skipping plot generation.")
         plt.close()
         return
 
-    # Plot main losses
-    plt.subplot(2, 1, 1)
-    plt.plot(epochs, g_losses, label="Generator Loss", alpha=0.8)
-    plt.plot(epochs, d_losses, label="Discriminator Loss", alpha=0.8)
-    plt.title("Generator and Discriminator Loss During Training (Per Epoch)")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
+    plt.plot(iters, g_losses, label="Generator Loss", alpha=0.8)
+    plt.plot(iters, d_losses, label="Discriminator Loss", alpha=0.8)
+
+    plt.title("Generator and Discriminator Loss During Training (Per Iteration)")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss (BCELoss)")
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
-
-    # Plot additional losses
-    plt.subplot(2, 1, 2)
-    plt.plot(epochs, perceptual_losses, label="Perceptual Loss", alpha=0.8)
-    plt.plot(epochs, fm_losses, label="Feature Matching Loss", alpha=0.8)
-    plt.title("Additional Loss Components During Training")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-
     plt.tight_layout()
     try:
         plt.savefig(output_path)
@@ -63,31 +46,6 @@ def plot_gan_losses(history, output_path):
         print(f"Error saving plot to {output_path}: {e}")
     plt.close() # Close the figure to free memory
 
-class PerceptualLoss(nn.Module):
-    def __init__(self):
-        super(PerceptualLoss, self).__init__()
-        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).features
-        self.blocks = nn.ModuleList([
-            vgg[:4],   # relu1_2
-            vgg[4:9],  # relu2_2
-            vgg[9:16], # relu3_3
-        ]).eval()
-        
-        for p in self.parameters():
-            p.requires_grad = False
-            
-    def forward(self, x, y):
-        x_feats = []
-        y_feats = []
-        for block in self.blocks:
-            x = block(x)
-            y = block(y)
-            x_feats.append(x)
-            y_feats.append(y)
-        return sum(torch.mean((x - y) ** 2) for x, y in zip(x_feats, y_feats))
-
-def feature_matching_loss(real_features, fake_features):
-    return sum(torch.mean((real - fake) ** 2) for real, fake in zip(real_features, fake_features))
 
 def main(args):
     # Set device
@@ -110,15 +68,12 @@ def main(args):
 
     # --- Setup data loader --- #
     try:
-        # Initialize dataset with correct parameters
-        dataset = RSNAPneumoniaDataset(
-            data_dir=os.path.join(args.data_dir, 'Training', 'Images'),
-            metadata_file=os.path.join(args.data_dir, 'stage2_train_metadata.csv'),
-            transform=data_transforms['train'],
-            is_test=False
+        train_loader, _ = get_dataloaders(
+            data_dir=args.data_dir,
+            batch_size=args.batch_size,
+            num_workers=args.workers
         )
-        dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-        print(f"Loaded training data with {len(dataset)} samples.")
+        print(f"Loaded training data with {len(train_loader.dataset)} samples.")
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print(f"Please ensure the dataset exists at '{args.data_dir}' and is structured correctly.")
@@ -140,9 +95,7 @@ def main(args):
 
     # --- Loss, Optimizers, Labels --- #
     criterion = nn.BCELoss()
-    perceptual_loss = PerceptualLoss().to(device)
-    # Generate fixed noise for visualization - ensure correct shape
-    fixed_noise = torch.randn(args.vis_batch_size, args.latent_dim, device=device)
+    fixed_noise = torch.randn(args.vis_batch_size, args.latent_dim, 1, 1, device=device) # Smaller batch for vis
     real_label = 0.9 # Use label smoothing for real images
     fake_label = 0.
     optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
@@ -158,113 +111,79 @@ def main(args):
         'D_G_z1_iter': [], # Avg D output for fake batch before G update
         'D_G_z2_iter': [], # Avg D output for fake batch after G update
         'G_losses_epoch': [], # Avg G loss per epoch
-        'D_losses_epoch': [],  # Avg D loss per epoch
-        'perceptual_losses': [],
-        'feature_matching_losses': []
+        'D_losses_epoch': []  # Avg D loss per epoch
     }
     iters = 0
     start_time = time.time()
-
-    # Progressive growing schedule
-    resolutions = [28, 56, 112, 224]  # Progressive resolutions
-    epochs_per_resolution = args.epochs // len(resolutions)
-    current_resolution_idx = 0
 
     for epoch in range(args.epochs):
         epoch_start_time = time.time()
         epoch_G_loss_accum = 0.0
         epoch_D_loss_accum = 0.0
-        num_batches = len(dataloader)
+        num_batches = len(train_loader)
 
-        # Update alpha for progressive growing
-        current_resolution = resolutions[min(current_resolution_idx, len(resolutions)-1)]
-        alpha = min(1.0, (epoch % epochs_per_resolution) / (epochs_per_resolution * 0.3))
-        
-        # Progress to next resolution
-        if epoch > 0 and epoch % epochs_per_resolution == 0 and current_resolution_idx < len(resolutions)-1:
-            current_resolution_idx += 1
-            print(f"\nProgressing to resolution {resolutions[current_resolution_idx]}x{resolutions[current_resolution_idx]}")
+        progress_bar = tqdm(enumerate(train_loader), total=num_batches, desc=f"Epoch {epoch+1}/{args.epochs}", leave=True)
+        for i, data in progress_bar:
 
-        D_losses, G_losses = [], []
-        D_x_vals, D_G_z1_vals, D_G_z2_vals = [], [], []
-        perceptual_losses, fm_losses = [], []
-
-        progress_bar = tqdm(dataloader, total=num_batches, desc=f"Epoch {epoch+1}/{args.epochs}", leave=True)
-        for i, (real_images, _) in enumerate(progress_bar):
-            real_images = real_images.to(device)
-            batch_size = real_images.size(0)
-
-            # Train Discriminator
+            # (1) Update D network
             netD.zero_grad()
-            label_real = torch.full((batch_size,), real_label, dtype=torch.float, device=device)
-            label_fake = torch.full((batch_size,), fake_label, dtype=torch.float, device=device)
+            real_data = data[0].to(device)
+            b_size = real_data.size(0)
+            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
 
-            output_real = netD(real_images, alpha)
+            output_real = netD(real_data).view(-1)
+            errD_real = criterion(output_real, label)
+            errD_real.backward()
             D_x = output_real.mean().item()
-            errD_real = criterion(output_real, label_real)
 
-            # Generate noise vector - ensure correct shape
-            noise = torch.randn(batch_size, args.latent_dim, device=device)
-            fake_images = netG(noise, alpha)
-            output_fake = netD(fake_images.detach(), alpha)
+            noise = torch.randn(b_size, args.latent_dim, 1, 1, device=device)
+            fake = netG(noise)
+            label.fill_(fake_label)
+            output_fake = netD(fake.detach()).view(-1)
+            errD_fake = criterion(output_fake, label)
+            errD_fake.backward()
             D_G_z1 = output_fake.mean().item()
-            errD_fake = criterion(output_fake, label_fake)
 
             errD = errD_real + errD_fake
-            errD.backward()
             optimizerD.step()
 
-            # Train Generator
+            # (2) Update G network
             netG.zero_grad()
-            output_fake = netD(fake_images, alpha)
-            D_G_z2 = output_fake.mean().item()
-            
-            # Calculate losses
-            errG_adv = criterion(output_fake, label_real)
-            errG_perceptual = perceptual_loss(fake_images, real_images)
-            errG_fm = feature_matching_loss(
-                netD.get_intermediate_features(real_images, alpha),
-                netD.get_intermediate_features(fake_images, alpha)
-            )
-            
-            # Combined loss
-            errG = errG_adv + 10.0 * errG_perceptual + 5.0 * errG_fm
+            label.fill_(real_label)
+            output_fake_for_G = netD(fake).view(-1)
+            errG = criterion(output_fake_for_G, label)
             errG.backward()
+            D_G_z2 = output_fake_for_G.mean().item()
             optimizerG.step()
 
-            # Record losses
-            D_losses.append(errD.item())
-            G_losses.append(errG.item())
-            D_x_vals.append(D_x)
-            D_G_z1_vals.append(D_G_z1)
-            D_G_z2_vals.append(D_G_z2)
-            perceptual_losses.append(errG_perceptual.item())
-            fm_losses.append(errG_fm.item())
+            # --- Record losses and metrics per iteration --- #
+            history['G_losses_iter'].append(errG.item())
+            history['D_losses_iter'].append(errD.item())
+            history['D_x_iter'].append(D_x)
+            history['D_G_z1_iter'].append(D_G_z1)
+            history['D_G_z2_iter'].append(D_G_z2)
+
+            epoch_G_loss_accum += errG.item()
+            epoch_D_loss_accum += errD.item()
 
             # Update progress bar
-            progress_bar.set_postfix({
-                'D_loss': f'{np.mean(D_losses):.3f}',
-                'G_loss': f'{np.mean(G_losses):.3f}',
-                'D(x)': f'{np.mean(D_x_vals):.3f}',
-                'D(G(z))': f'{np.mean(D_G_z2_vals):.3f}'
-            })
+            progress_bar.set_postfix({'Loss_D': f"{errD.item():.4f}", 'Loss_G': f"{errG.item():.4f}",
+                                      'D(x)': f"{D_x:.4f}", 'D(G(z))': f"{D_G_z1:.4f}/{D_G_z2:.4f}"})
 
             # --- Save generated image samples --- #
             if (iters % args.save_interval == 0) or ((epoch == args.epochs-1) and (i == num_batches-1)):
                 with torch.no_grad():
-                    fake_vis = netG(fixed_noise, alpha).detach().cpu()
-                torchvision.utils.save_image(fake_vis, f"{gan_output_dir}/fake_samples_epoch_{epoch+1:03d}_iter_{iters:06d}.png", normalize=True, nrow=8) # Use vis_batch_size indirectly via nrow
+                    fake_vis = netG(fixed_noise).detach().cpu()
+                vutils.save_image(fake_vis, f"{gan_output_dir}/fake_samples_epoch_{epoch+1:03d}_iter_{iters:06d}.png", normalize=True, nrow=8) # Use vis_batch_size indirectly via nrow
 
             iters += 1
 
         # --- End of epoch summary and recording --- #
         epoch_time = time.time() - epoch_start_time
-        avg_G_loss_epoch = np.mean(G_losses)
-        avg_D_loss_epoch = np.mean(D_losses)
+        avg_G_loss_epoch = epoch_G_loss_accum / num_batches
+        avg_D_loss_epoch = epoch_D_loss_accum / num_batches
         history['G_losses_epoch'].append(avg_G_loss_epoch)
         history['D_losses_epoch'].append(avg_D_loss_epoch)
-        history['perceptual_losses'].append(np.mean(perceptual_losses))
-        history['feature_matching_losses'].append(np.mean(fm_losses))
 
         print(f"Epoch {epoch+1}/{args.epochs} Summary - Time: {epoch_time:.2f}s, Avg Loss_D: {avg_D_loss_epoch:.4f}, Avg Loss_G: {avg_G_loss_epoch:.4f}")
 
@@ -312,20 +231,20 @@ if __name__ == '__main__':
     # --- Model Hyperparameters --- #
     parser.add_argument('--num-channels', type=int, default=3, help='Number of image channels (3 for RGB)')
     parser.add_argument('--latent-dim', type=int, default=100, help='Size of the latent z vector')
-    parser.add_argument('--feature-maps-g', type=int, default=32, help='Base feature maps for Generator')
-    parser.add_argument('--feature-maps-d', type=int, default=32, help='Base feature maps for Discriminator')
+    parser.add_argument('--feature-maps-g', type=int, default=64, help='Base feature maps for Generator')
+    parser.add_argument('--feature-maps-d', type=int, default=64, help='Base feature maps for Discriminator')
 
     # --- Training Hyperparameters --- #
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training')
+    parser.add_argument('--batch-size', type=int, default=128, help='Batch size for training')
     parser.add_argument('--lr', type=float, default=0.0002, help='Learning rate for Adam optimizer')
     parser.add_argument('--beta1', type=float, default=0.5, help='Beta1 hyperparameter for Adam optimizers')
     parser.add_argument('--workers', type=int, default=4, help='Number of data loading workers')
 
     # --- Logging and Saving --- #
-    parser.add_argument('--vis-batch-size', type=int, default=32, help='Batch size for generating visualization images')
-    parser.add_argument('--save-interval', type=int, default=1000, help='Save generated image samples every N iterations')
-    parser.add_argument('--checkpoint-interval', type=int, default=5, help='Save model checkpoints every N epochs')
+    parser.add_argument('--vis-batch-size', type=int, default=64, help='Batch size for generating visualization images')
+    parser.add_argument('--save-interval', type=int, default=500, help='Save generated image samples every N iterations')
+    parser.add_argument('--checkpoint-interval', type=int, default=10, help='Save model checkpoints every N epochs')
     parser.add_argument('--cpu', action='store_true', help='Force use CPU even if CUDA is available')
 
     args = parser.parse_args()

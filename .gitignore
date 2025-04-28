@@ -171,4 +171,4 @@ data/synthetic/*
 models/*
 
 # GAN images
-results/gan_images/*
+# results/gan_images/*

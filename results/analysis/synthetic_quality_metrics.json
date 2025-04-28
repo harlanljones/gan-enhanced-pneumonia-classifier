@@ -1,8 +1,0 @@
-{
-    "fid_score": 474.42815379613387,
-    "precision": 1.0,
-    "recall": 0.03,
-    "num_images_compared": 100,
-    "average_ssim": 0.01565388353028985,
-    "std_dev_ssim": 0.0035406526039139705
-}

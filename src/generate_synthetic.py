@@ -43,7 +43,7 @@ def generate_images(generator_path, output_dir, num_images, latent_dim, feature_
                 break
 
             # Create batch of latent vectors
-            noise = torch.randn(current_batch_size, latent_dim, device=device)
+            noise = torch.randn(current_batch_size, latent_dim, 1, 1, device=device)
             
             # Generate fake image batch with G
             fake_images = netG(noise)
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', type=str, default='./data/synthetic', help="Directory to save generated images.")
     parser.add_argument('--num-images', type=int, default=5000, help="Number of synthetic images to generate.")
     parser.add_argument('--latent-dim', type=int, default=100, help="Size of the latent z vector (must match training).")
-    parser.add_argument('--feature-maps-g', type=int, default=32, help="Generator base feature maps (must match training).")
+    parser.add_argument('--feature-maps-g', type=int, default=64, help="Generator base feature maps (must match training).")
     parser.add_argument('--batch-size', type=int, default=64, help="Batch size for generation.")
     parser.add_argument('--cpu', action='store_true', help="Force CPU usage even if CUDA is available.")
 
