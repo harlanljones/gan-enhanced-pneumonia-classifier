@@ -117,36 +117,42 @@ class ResultsAnalyzer:
         metrics = {}
         essential_missing = False
 
-        # Load training history
-        history_path = self.metrics_dir / f"{prefix}training_history.json"
-        if history_path.exists():
-            with open(history_path) as f:
-                metrics['history'] = json.load(f)
-        else:
-            print(f"Warning: Training history not found: {history_path}")
-            # Decide if this is critical. Let's assume it is for plotting.
-            # essential_missing = True
-
-        # Load final metrics (optional for some analyses)
-        final_path = self.metrics_dir / f"{prefix}final_metrics.json"
-        if final_path.exists():
-            with open(final_path) as f:
-                metrics['final'] = json.load(f)
-        else:
-            print(f"Info: Final metrics not found: {final_path}")
-
-        # Load CV summary if exists
+        # First try to load CV metrics if they exist
         cv_path = self.metrics_dir / f"{prefix}cv_summary.json"
         if cv_path.exists():
             with open(cv_path) as f:
                 metrics['cv'] = json.load(f)
+                # For CV runs, also try to load individual fold histories
+                fold_histories = []
+                for fold in range(1, 6):  # Assuming 5-fold CV
+                    fold_history_path = self.metrics_dir / f"fold_{fold}_{prefix}training_history.json"
+                    if fold_history_path.exists():
+                        with open(fold_history_path) as f:
+                            fold_history = json.load(f)
+                            fold_history['fold'] = fold
+                            fold_histories.append(fold_history)
+                if fold_histories:
+                    metrics['history'] = fold_histories[0]  # Use first fold for plotting
+                    metrics['fold_histories'] = fold_histories
         else:
-            print(f"Info: CV summary not found: {cv_path}")
-            # If CV summary is missing, but history exists, we might still plot single run
-            if 'history' not in metrics:
-                essential_missing = True # Need at least history or CV summary
+            # If no CV metrics, try loading single run metrics
+            history_path = self.metrics_dir / f"{prefix}training_history.json"
+            if history_path.exists():
+                with open(history_path) as f:
+                    metrics['history'] = json.load(f)
+            else:
+                print(f"Warning: Training history not found: {history_path}")
+                essential_missing = True
 
-        if essential_missing:
+            # Load final metrics (optional for some analyses)
+            final_path = self.metrics_dir / f"{prefix}final_metrics.json"
+            if final_path.exists():
+                with open(final_path) as f:
+                    metrics['final'] = json.load(f)
+            else:
+                print(f"Info: Final metrics not found: {final_path}")
+
+        if essential_missing and 'cv' not in metrics:
             print(f"Error: Essential metrics files missing for prefix '{prefix}'. Cannot proceed with analysis for this run.")
             return None
         if not metrics:
@@ -185,6 +191,13 @@ class ResultsAnalyzer:
                             epochs = range(1, len(history[ratio_key]) + 1)
                             plt.plot(epochs, history[ratio_key], label=f'{label_prefix} Ratio', color=color, linestyle='-.' if linestyle == '-' else '-')
                             has_data = True
+
+                            # If we have fold histories, plot those too
+                            if 'fold_histories' in run_metrics:
+                                for fold_hist in run_metrics['fold_histories'][1:]:  # Skip first fold as it's already plotted
+                                    if ratio_key in fold_hist and len(fold_hist[ratio_key]) > 0:
+                                        fold_epochs = range(1, len(fold_hist[ratio_key]) + 1)
+                                        plt.plot(fold_epochs, fold_hist[ratio_key], color=color, alpha=0.3, linestyle='-.' if linestyle == '-' else '-')
                 else:
                     train_key = f'train_{metric}'
                     val_key = f'val_{metric}'
@@ -193,6 +206,14 @@ class ResultsAnalyzer:
                         plt.plot(epochs, history[train_key], label=f'{label_prefix} Train', color=color, linestyle='-')
                         plt.plot(epochs, history[val_key], label=f'{label_prefix} Val', color=color, linestyle='--')
                         has_data = True
+
+                        # If we have fold histories, plot those too
+                        if 'fold_histories' in run_metrics:
+                            for fold_hist in run_metrics['fold_histories'][1:]:  # Skip first fold as it's already plotted
+                                if train_key in fold_hist and val_key in fold_hist:
+                                    fold_epochs = range(1, len(fold_hist[train_key]) + 1)
+                                    plt.plot(fold_epochs, fold_hist[train_key], color=color, alpha=0.3, linestyle='-')
+                                    plt.plot(fold_epochs, fold_hist[val_key], color=color, alpha=0.3, linestyle='--')
 
             if not has_data:
                 plt.close()

@@ -137,8 +137,8 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
             train_dataset.set_synthetic_ratio(current_ratio)
         elif use_synthetic and not curriculum_schedule:
             # If using simple augmentation, ratio is effectively determined by ConcatDataset size
-            # For tracking, we can consider it 1.0 or calculate actual proportion if needed
-            pass # No dynamic ratio change needed
+            # For tracking, we consider it 1.0 since all synthetic data is used
+            current_ratio = 1.0 if isinstance(dataloaders['train'].dataset, torch.utils.data.ConcatDataset) else 0.0
 
         history['epoch'].append(epoch + 1)  # Add epoch number (1-based)
         history['synthetic_ratio'].append(current_ratio)

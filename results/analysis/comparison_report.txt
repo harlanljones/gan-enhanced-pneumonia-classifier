@@ -1,37 +1,24 @@
 === Model Performance Comparison Report ===
 
 
---- Final Test Set Performance ---
-
-* Baseline:
-  - Accuracy            : 0.7513
-  - Precision (Weighted): 1.0000
-  - Recall (Weighted)   : 0.7513
-  - F1 Score (Weighted) : 0.8580
-
-* Augmented:
-  - Accuracy            : 0.9090 (+21.0% vs Baseline)
-  - Precision (Weighted): 1.0000 (+0.0% vs Baseline)
-  - Recall (Weighted)   : 0.9090 (+21.0% vs Baseline)
-  - F1 Score (Weighted) : 0.9523 (+11.0% vs Baseline)
-
+--- Final Test Set Performance: No data found ---
 
 --- Cross-Validation Performance (Average ± Std Dev) ---
 
 * Baseline:
-  - Accuracy            : 0.7871 ± 0.0779
+  - Accuracy            : 0.7333 ± 0.0796
   - Precision (Weighted): 1.0000 ± 0.0000
-  - Recall (Weighted)   : 0.7871 ± 0.0779
-  - F1 Score (Weighted) : 0.8787 ± 0.0498
+  - Recall (Weighted)   : 0.7333 ± 0.0796
+  - F1 Score (Weighted) : 0.8437 ± 0.0521
 
 * Augmented:
-  - Accuracy            : 0.8124 ± 0.1061 (+3.2% vs Baseline Avg)
+  - Accuracy            : 0.8270 ± 0.0769 (+12.8% vs Baseline Avg)
   - Precision (Weighted): 1.0000 ± 0.0000 (+0.0% vs Baseline Avg)
-  - Recall (Weighted)   : 0.8124 ± 0.1061 (+3.2% vs Baseline Avg)
-  - F1 Score (Weighted) : 0.8926 ± 0.0668 (+1.6% vs Baseline Avg)
+  - Recall (Weighted)   : 0.8270 ± 0.0769 (+12.8% vs Baseline Avg)
+  - F1 Score (Weighted) : 0.9033 ± 0.0474 (+7.1% vs Baseline Avg)
 
 * Curriculum:
-  - Accuracy            : 0.8196 ± 0.0525 (+4.1% vs Baseline Avg)
+  - Accuracy            : 0.7357 ± 0.1025 (+0.3% vs Baseline Avg)
   - Precision (Weighted): 1.0000 ± 0.0000 (+0.0% vs Baseline Avg)
-  - Recall (Weighted)   : 0.8196 ± 0.0525 (+4.1% vs Baseline Avg)
-  - F1 Score (Weighted) : 0.8999 ± 0.0317 (+2.4% vs Baseline Avg)
+  - Recall (Weighted)   : 0.7357 ± 0.1025 (+0.3% vs Baseline Avg)
+  - F1 Score (Weighted) : 0.8439 ± 0.0652 (+0.0% vs Baseline Avg)
