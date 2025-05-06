@@ -6,17 +6,15 @@ import numpy as np
 import os
 import argparse
 import time
-import json # Added for saving history
+import json
 from tqdm import tqdm
 import matplotlib
-matplotlib.use('Agg') # Use Agg backend for non-interactive plotting
-import matplotlib.pyplot as plt # Added for plotting
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
-# Project specific imports
-from data_loader import get_dataloaders # Assuming get_dataloaders can provide just the train loader
+from data_loader import get_dataloaders
 from dcgan import Generator, Discriminator, weights_init
 
-# --- Plotting Function --- Moved from classifier and adapted
 def plot_gan_losses(history, output_path):
     """Plots Generator and Discriminator losses from training history."""
     plt.figure(figsize=(12, 6))
@@ -44,25 +42,20 @@ def plot_gan_losses(history, output_path):
         print(f"Saved GAN loss plot to {output_path}")
     except Exception as e:
         print(f"Error saving plot to {output_path}: {e}")
-    plt.close() # Close the figure to free memory
+    plt.close()
 
 
 def main(args):
-    # Set device
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     print(f"Using device: {device}")
 
     # --- Create output directories --- #
-    # Gan models subdir
     gan_model_dir = os.path.join(args.model_dir, 'gan')
     os.makedirs(gan_model_dir, exist_ok=True)
-    # Gan sample images subdir
     gan_output_dir = os.path.join(args.output_dir, 'gan_images')
     os.makedirs(gan_output_dir, exist_ok=True)
-    # Metrics subdir (shared with classifier potentially, use prefix)
     metrics_dir = args.results_dir
     os.makedirs(metrics_dir, exist_ok=True)
-    # Figures subdir (shared with classifier potentially, use prefix)
     figures_dir = args.figures_dir
     os.makedirs(figures_dir, exist_ok=True)
 
@@ -166,7 +159,6 @@ def main(args):
             epoch_G_loss_accum += errG.item()
             epoch_D_loss_accum += errD.item()
 
-            # Update progress bar
             progress_bar.set_postfix({'Loss_D': f"{errD.item():.4f}", 'Loss_G': f"{errG.item():.4f}",
                                       'D(x)': f"{D_x:.4f}", 'D(G(z))': f"{D_G_z1:.4f}/{D_G_z2:.4f}"})
 
@@ -249,12 +241,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    # # Derived/Corrected Paths (No longer needed as we create subdirs manually)
-    # args.gan_model_dir = os.path.join(args.model_dir, 'gan')
-    # args.gan_output_dir = os.path.join(args.output_dir, 'gan_images')
-
     print("--- Training Arguments ---")
-    # Print args in a cleaner format
     for k, v in vars(args).items():
         print(f"  {k}: {v}")
     print("-------------------------")

@@ -6,12 +6,11 @@ from torchvision import transforms
 import numpy as np
 import sys
 
-# Add src directory to path to import dcgan and utils
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from dcgan import Generator # Assuming Generator class is in dcgan.py
-    from utils import check_create_dir # Assuming check_create_dir is in utils.py
+    from dcgan import Generator 
+    from utils import check_create_dir
 except ImportError as e:
     print(f"Error importing modules. Make sure dcgan.py and utils.py are in the src directory: {e}")
     sys.exit(1)
@@ -21,7 +20,7 @@ def generate_images(generator_path, output_dir, num_images, latent_dim, feature_
     check_create_dir(output_dir)
 
     # Load the generator model
-    netG = Generator(latent_dim, 3, feature_maps_g).to(device) # 3 channels for RGB
+    netG = Generator(latent_dim, 3, feature_maps_g).to(device)
     try:
         netG.load_state_dict(torch.load(generator_path, map_location=device))
     except FileNotFoundError:
@@ -32,7 +31,7 @@ def generate_images(generator_path, output_dir, num_images, latent_dim, feature_
         print("Ensure the Generator class definition matches the saved model.")
         sys.exit(1)
         
-    netG.eval() # Set generator to evaluation mode
+    netG.eval()
 
     print(f"Generating {num_images} synthetic images...")
     generated_count = 0
@@ -51,7 +50,6 @@ def generate_images(generator_path, output_dir, num_images, latent_dim, feature_
             # Save images
             for i in range(fake_images.size(0)):
                 if generated_count < num_images:
-                    # Un-normalize from tanh output [-1, 1] to [0, 1] before saving
                     img = (fake_images[i] * 0.5) + 0.5 
                     vutils.save_image(img, os.path.join(output_dir, f'synthetic_{generated_count+1:05d}.png'), normalize=False)
                     generated_count += 1

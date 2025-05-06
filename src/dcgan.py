@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F # Import functional for potential resizing if needed
+import torch.nn.functional as F
 
 # Custom weights initialization called on generator and discriminator
 def weights_init(m):
@@ -23,32 +23,29 @@ class Generator(nn.Module):
         """
         super(Generator, self).__init__()
         self.main = nn.Sequential(
-            # Input: latent_dim x 1 x 1
-            # Output size = (Input size - 1) * stride + kernel_size - 2 * padding
-            nn.ConvTranspose2d(latent_dim, feature_maps_g * 8, 7, 1, 0, bias=False), # Output: (f_g*8) x 7 x 7
+            nn.ConvTranspose2d(latent_dim, feature_maps_g * 8, 7, 1, 0, bias=False), 
             nn.BatchNorm2d(feature_maps_g * 8),
             nn.ReLU(True),
 
-            nn.ConvTranspose2d(feature_maps_g * 8, feature_maps_g * 4, 4, 2, 1, bias=False), # Output: (f_g*4) x 14 x 14
+            nn.ConvTranspose2d(feature_maps_g * 8, feature_maps_g * 4, 4, 2, 1, bias=False), 
             nn.BatchNorm2d(feature_maps_g * 4),
             nn.ReLU(True),
 
-            nn.ConvTranspose2d(feature_maps_g * 4, feature_maps_g * 2, 4, 2, 1, bias=False), # Output: (f_g*2) x 28 x 28
+            nn.ConvTranspose2d(feature_maps_g * 4, feature_maps_g * 2, 4, 2, 1, bias=False), 
             nn.BatchNorm2d(feature_maps_g * 2),
             nn.ReLU(True),
 
-            nn.ConvTranspose2d(feature_maps_g * 2, feature_maps_g, 4, 2, 1, bias=False), # Output: f_g x 56 x 56
+            nn.ConvTranspose2d(feature_maps_g * 2, feature_maps_g, 4, 2, 1, bias=False),
             nn.BatchNorm2d(feature_maps_g),
             nn.ReLU(True),
 
-            nn.ConvTranspose2d(feature_maps_g, feature_maps_g // 2, 4, 2, 1, bias=False), # Output: (f_g//2) x 112 x 112
+            nn.ConvTranspose2d(feature_maps_g, feature_maps_g // 2, 4, 2, 1, bias=False), 
             nn.BatchNorm2d(feature_maps_g // 2),
             nn.ReLU(True),
 
-            nn.ConvTranspose2d(feature_maps_g // 2, num_channels, 4, 2, 1, bias=False), # Output: num_channels x 224 x 224
-            nn.Tanh() # Output: num_channels x 224 x 224 (values between -1 and 1)
+            nn.ConvTranspose2d(feature_maps_g // 2, num_channels, 4, 2, 1, bias=False), 
+            nn.Tanh()
         )
-        # Apply the weights initialization
         self.apply(weights_init)
 
     def forward(self, input):
@@ -65,44 +62,34 @@ class Discriminator(nn.Module):
         """
         super(Discriminator, self).__init__()
         self.main = nn.Sequential(
-            # Input: num_channels x 224 x 224
-            # Output size = floor((Input size + 2 * padding - kernel_size) / stride) + 1
-            nn.Conv2d(num_channels, feature_maps_d // 2, 4, 2, 1, bias=False), # Output: (f_d//2) x 112 x 112
+            nn.Conv2d(num_channels, feature_maps_d // 2, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
 
-            nn.Conv2d(feature_maps_d // 2, feature_maps_d, 4, 2, 1, bias=False), # Output: f_d x 56 x 56
+            nn.Conv2d(feature_maps_d // 2, feature_maps_d, 4, 2, 1, bias=False), 
             nn.BatchNorm2d(feature_maps_d),
             nn.LeakyReLU(0.2, inplace=True),
 
-            nn.Conv2d(feature_maps_d, feature_maps_d * 2, 4, 2, 1, bias=False), # Output: (f_d*2) x 28 x 28
+            nn.Conv2d(feature_maps_d, feature_maps_d * 2, 4, 2, 1, bias=False), 
             nn.BatchNorm2d(feature_maps_d * 2),
             nn.LeakyReLU(0.2, inplace=True),
 
-            nn.Conv2d(feature_maps_d * 2, feature_maps_d * 4, 4, 2, 1, bias=False), # Output: (f_d*4) x 14 x 14
+            nn.Conv2d(feature_maps_d * 2, feature_maps_d * 4, 4, 2, 1, bias=False), 
             nn.BatchNorm2d(feature_maps_d * 4),
             nn.LeakyReLU(0.2, inplace=True),
 
-            nn.Conv2d(feature_maps_d * 4, feature_maps_d * 8, 4, 2, 1, bias=False), # Output: (f_d*8) x 7 x 7
+            nn.Conv2d(feature_maps_d * 4, feature_maps_d * 8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(feature_maps_d * 8),
             nn.LeakyReLU(0.2, inplace=True),
 
-            nn.Conv2d(feature_maps_d * 8, 1, 7, 1, 0, bias=False), # Output: 1 x 1 x 1
-            nn.Sigmoid() # Output: scalar probability
+            nn.Conv2d(feature_maps_d * 8, 1, 7, 1, 0, bias=False), 
+            nn.Sigmoid()
         )
-        # Apply the weights initialization
         self.apply(weights_init)
 
     def forward(self, input):
-        # Input validation - check if image size is 224x224
-        # if input.shape[2] != 224 or input.shape[3] != 224:
-        #     print(f"Warning: Discriminator received input of size {input.shape[2:]}, expected 224x224.")
-            # Optionally resize here if needed, though generator should provide correct size
-            # input = F.interpolate(input, size=(224, 224), mode='bilinear', align_corners=False)
-
-        return self.main(input).view(-1, 1).squeeze(1) # Flatten output
+        return self.main(input).view(-1, 1).squeeze(1)
 
 if __name__ == '__main__':
-    # Example Usage (for testing the architecture)
     latent_size = 100
     num_chan = 3
     f_g = 64 # Generator feature maps base size
@@ -112,7 +99,6 @@ if __name__ == '__main__':
     # Create the generator
     netG = Generator(latent_size, num_chan, f_g)
     print("Generator Architecture:")
-    # print(netG) # Can be verbose
 
     # Create a dummy noise vector
     noise = torch.randn(4, latent_size, 1, 1) # Batch size 4
@@ -125,7 +111,6 @@ if __name__ == '__main__':
     # Create the discriminator
     netD = Discriminator(num_chan, f_d)
     print("Discriminator Architecture:")
-    # print(netD) # Can be verbose
 
     # Pass fake image through discriminator
     outputD = netD(fake_image)
