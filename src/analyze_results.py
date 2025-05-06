@@ -9,37 +9,25 @@ from typing import Dict, List, Tuple, Optional
 import argparse
 import random
 from PIL import Image
-import cv2 # For resizing and grayscale conversion in SSIM/GradCAM
-from tqdm import tqdm  # Add tqdm import for progress bars
-
-# SSIM calculation
+from tqdm import tqdm
 from skimage.metrics import structural_similarity as ssim
-
-# Grad-CAM
 import torch
 import torch.nn
 import torchvision.transforms as T
-from torchvision.models import resnet50 # Assuming ResNet50 is used
+from torchvision.models import resnet50
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image, preprocess_image
 
-# Project imports (assuming they are accessible)
-# Need to adjust path if analyze_results.py is run from root or src
 try:
-    # If run from root
     from src.classifier import create_resnet50_baseline
     from src.data_loader import RSNAPneumoniaDataset, SyntheticDataset, data_transforms
     from src.utils import check_create_dir
 except ImportError:
-    # If run from src directory
     print("Running from src directory, adjusting imports...")
-    # No need to modify sys.path if using relative imports correctly
-    # import sys
-    # sys.path.append('..') # Add project root to path
-    from classifier import create_resnet50_baseline # Use relative import
-    from data_loader import RSNAPneumoniaDataset, SyntheticDataset, data_transforms # Use relative import
-    from utils import check_create_dir # Use relative import
+    from classifier import create_resnet50_baseline
+    from data_loader import RSNAPneumoniaDataset, SyntheticDataset, data_transforms
+    from utils import check_create_dir
 
 # Inverse transform for visualization
 INV_NORMALIZE = T.Normalize(
@@ -49,11 +37,11 @@ INV_NORMALIZE = T.Normalize(
 
 def deprocess_image(tensor):
     """Convert a tensor image back to a NumPy array for visualization."""
-    tensor = INV_NORMALIZE(tensor) # Apply inverse normalization
-    img_np = tensor.squeeze().cpu().numpy() # Remove batch dim, move to CPU, convert to NumPy
-    img_np = np.transpose(img_np, (1, 2, 0)) # Change from C, H, W to H, W, C
-    img_np = np.clip(img_np, 0, 1) # Clip values to [0, 1]
-    img_np = (img_np * 255).astype(np.uint8) # Scale to [0, 255] and convert to uint8
+    tensor = INV_NORMALIZE(tensor)
+    img_np = tensor.squeeze().cpu().numpy()
+    img_np = np.transpose(img_np, (1, 2, 0))
+    img_np = np.clip(img_np, 0, 1)
+    img_np = (img_np * 255).astype(np.uint8)
     return img_np
 
 class ResultsAnalyzer:
@@ -77,7 +65,6 @@ class ResultsAnalyzer:
         self.synthetic_dir = Path(synthetic_dir)
         self.device = device
         
-        # Define figures_dir before using it
         self.figures_dir = self.analysis_dir # Save all figures in the analysis dir
         
         check_create_dir(self.analysis_dir)
@@ -87,18 +74,17 @@ class ResultsAnalyzer:
 
         # Style configuration
         try:
-            plt.style.use('seaborn-v0_8-darkgrid') # Use a specific seaborn style
+            plt.style.use('seaborn-v0_8-darkgrid')
         except:
             plt.style.use('default')
             plt.rcParams['figure.figsize'] = [12, 6]
             plt.rcParams['axes.grid'] = True
             plt.rcParams['grid.alpha'] = 0.3
         
-        # Custom color scheme that works with both seaborn and default styles
         self.colors = {
-            'baseline': '#1f77b4',  # Blue
-            'augmented': '#2ca02c',  # Green
-            'curriculum': '#ff7f0e', # Add color for curriculum
+            'baseline': '#1f77b4',
+            'augmented': '#2ca02c',
+            'curriculum': '#ff7f0e',
             'baseline_std': '#9ecae1',
             'augmented_std': '#a1d99b',
             'curriculum_std': '#ffbb78'
@@ -117,12 +103,10 @@ class ResultsAnalyzer:
         metrics = {}
         essential_missing = False
 
-        # First try to load CV metrics if they exist
         cv_path = self.metrics_dir / f"{prefix}cv_summary.json"
         if cv_path.exists():
             with open(cv_path) as f:
                 metrics['cv'] = json.load(f)
-                # For CV runs, also try to load individual fold histories
                 fold_histories = []
                 for fold in range(1, 6):  # Assuming 5-fold CV
                     fold_history_path = self.metrics_dir / f"fold_{fold}_{prefix}training_history.json"
@@ -132,7 +116,7 @@ class ResultsAnalyzer:
                             fold_history['fold'] = fold
                             fold_histories.append(fold_history)
                 if fold_histories:
-                    metrics['history'] = fold_histories[0]  # Use first fold for plotting
+                    metrics['history'] = fold_histories[0]
                     metrics['fold_histories'] = fold_histories
         else:
             # If no CV metrics, try loading single run metrics
@@ -144,7 +128,6 @@ class ResultsAnalyzer:
                 print(f"Warning: Training history not found: {history_path}")
                 essential_missing = True
 
-            # Load final metrics (optional for some analyses)
             final_path = self.metrics_dir / f"{prefix}final_metrics.json"
             if final_path.exists():
                 with open(final_path) as f:
@@ -166,7 +149,7 @@ class ResultsAnalyzer:
         metrics_to_plot = [
             ('acc', 'Accuracy'),
             ('loss', 'Loss'),
-            ('synthetic_ratio', 'Synthetic Ratio') # Add ratio plot
+            ('synthetic_ratio', 'Synthetic Ratio')
         ]
 
         valid_runs = {k: v for k, v in metrics_dict.items() if v and 'history' in v}
@@ -180,21 +163,20 @@ class ResultsAnalyzer:
 
             for run_name, run_metrics in valid_runs.items():
                 history = run_metrics['history']
-                color = self.colors.get(run_name, '#808080') # Default gray
+                color = self.colors.get(run_name, '#808080')
                 linestyle = '--' if 'val' in metric else '-'
                 label_prefix = run_name.replace("_", " ").title()
 
                 if metric == 'synthetic_ratio':
-                    if 'synthetic_ratio' in history and any(history['synthetic_ratio']): # Only plot if non-zero ratios exist
+                    if 'synthetic_ratio' in history and any(history['synthetic_ratio']):
                         ratio_key = 'synthetic_ratio'
                         if ratio_key in history and len(history[ratio_key]) > 0:
                             epochs = range(1, len(history[ratio_key]) + 1)
                             plt.plot(epochs, history[ratio_key], label=f'{label_prefix} Ratio', color=color, linestyle='-.' if linestyle == '-' else '-')
                             has_data = True
 
-                            # If we have fold histories, plot those too
                             if 'fold_histories' in run_metrics:
-                                for fold_hist in run_metrics['fold_histories'][1:]:  # Skip first fold as it's already plotted
+                                for fold_hist in run_metrics['fold_histories'][1:]: 
                                     if ratio_key in fold_hist and len(fold_hist[ratio_key]) > 0:
                                         fold_epochs = range(1, len(fold_hist[ratio_key]) + 1)
                                         plt.plot(fold_epochs, fold_hist[ratio_key], color=color, alpha=0.3, linestyle='-.' if linestyle == '-' else '-')
@@ -207,9 +189,8 @@ class ResultsAnalyzer:
                         plt.plot(epochs, history[val_key], label=f'{label_prefix} Val', color=color, linestyle='--')
                         has_data = True
 
-                        # If we have fold histories, plot those too
                         if 'fold_histories' in run_metrics:
-                            for fold_hist in run_metrics['fold_histories'][1:]:  # Skip first fold as it's already plotted
+                            for fold_hist in run_metrics['fold_histories'][1:]: 
                                 if train_key in fold_hist and val_key in fold_hist:
                                     fold_epochs = range(1, len(fold_hist[train_key]) + 1)
                                     plt.plot(fold_epochs, fold_hist[train_key], color=color, alpha=0.3, linestyle='-')
@@ -243,7 +224,6 @@ class ResultsAnalyzer:
         num_metrics = len(metrics)
         num_runs = len(valid_runs)
 
-        # Prepare data for plotting
         data = []
         for run_name, run_metrics in valid_runs.items():
             cv_results = run_metrics['cv']
@@ -266,7 +246,7 @@ class ResultsAnalyzer:
             return
 
         df = pd.DataFrame(data)
-        df = df.dropna(subset=['Value']) # Remove metrics that were entirely missing
+        df = df.dropna(subset=['Value'])
 
         if df.empty:
             print("DataFrame empty after dropping NaNs for CV comparison plot.")
@@ -280,7 +260,6 @@ class ResultsAnalyzer:
 
         for i, run_name in enumerate(df['Model'].unique()):
             run_df = df[df['Model'] == run_name]
-            # Align run_df with metric_names order
             run_df = run_df.set_index('Metric').reindex(metric_names).reset_index()
             color = self.colors.get(run_name.lower().replace(" ", "_"), f'C{i}')
             std_color = self.colors.get(f"{run_name.lower().replace(' ', '_')}_std", f'C{i}')
@@ -326,7 +305,6 @@ class ResultsAnalyzer:
                 for key, label in metrics_to_report:
                     value = metrics.get(key, 'N/A')
                     line = f"  - {label:<20}: {value:.4f}" if isinstance(value, float) else f"  - {label:<20}: {value}"
-                    # Compare to baseline if baseline exists and this isn't baseline
                     if baseline_final and name != 'baseline' and key in baseline_final:
                         baseline_value = baseline_final[key]
                         if isinstance(value, float) and isinstance(baseline_value, float) and baseline_value != 0:
@@ -335,7 +313,7 @@ class ResultsAnalyzer:
                         elif isinstance(value, float) and isinstance(baseline_value, float):
                             line += " (Baseline: 0)"
                     report_lines.append(line)
-            report_lines.append("") # Add spacing
+            report_lines.append("")
         else:
             report_lines.append("\n--- Final Test Set Performance: No data found ---")
 
@@ -353,16 +331,16 @@ class ResultsAnalyzer:
                     avg_value = avg_metrics.get(key, 'N/A')
                     std_value = std_metrics.get(key, 'N/A')
                     line = f"  - {label:<20}: {avg_value:.4f} ± {std_value:.4f}" if isinstance(avg_value, float) and isinstance(std_value, float) else f"  - {label:<20}: {avg_value} ± {std_value}"
-                    # Compare average to baseline average if available
                     if baseline_cv_avg and name != 'baseline' and key in baseline_cv_avg:
                         baseline_avg = baseline_cv_avg[key]
                         if isinstance(avg_value, float) and isinstance(baseline_avg, float) and baseline_avg != 0:
-                            improvement = (avg_value - baseline_avg) / baseline_avg * 100
-                            line += f" ({improvement:+.1f}% vs Baseline Avg)"
+                            improvement = avg_value - baseline_avg
+                            improvement_pct = improvement * 100
+                            line += f" ({improvement_pct:+.1f} percentage points vs Baseline Avg)"
                         elif isinstance(avg_value, float) and isinstance(baseline_avg, float):
                             line += " (Baseline Avg: 0)"
                     report_lines.append(line)
-            report_lines.append("") # Add spacing
+            report_lines.append("")
         else:
             report_lines.append("\n--- Cross-Validation Performance: No data found ---")
 
@@ -381,14 +359,12 @@ class ResultsAnalyzer:
         """Calculates SSIM between synthetic images and a sample of real positive images."""
         print("\n--- Calculating SSIM Distribution --- ")
         try:
-            # Define transform for SSIM (resize, grayscale, numpy)
             ssim_transform = T.Compose([
                 T.Resize((224, 224)),
                 T.Grayscale(),
-                T.ToTensor() # ToTensor scales to [0, 1]
+                T.ToTensor()
             ])
 
-            # Load real dataset (only need metadata and paths)
             real_metadata_path = self.data_dir / 'stage2_train_metadata.csv'
             if not real_metadata_path.exists():
                 print(f"Error: Real metadata not found at {real_metadata_path}")
@@ -409,9 +385,9 @@ class ResultsAnalyzer:
             for patient_id in tqdm(real_samples_df['patientId'], desc="Loading Real Images"):
                 img_path = self.data_dir / 'Training' / 'Images' / f"{patient_id}.png"
                 try:
-                    img = Image.open(img_path).convert('RGB') # Open as RGB first
+                    img = Image.open(img_path).convert('RGB')
                     img_tensor = ssim_transform(img)
-                    img_np = img_tensor.squeeze().numpy() # Remove channel dim for grayscale
+                    img_np = img_tensor.squeeze().numpy()
                     real_images_np.append(img_np)
                 except Exception as e:
                     print(f"Warning: Could not load real image {img_path}: {e}")
@@ -437,7 +413,6 @@ class ResultsAnalyzer:
 
                     current_ssim_scores = []
                     for real_np in real_images_np:
-                        # Ensure data_range is appropriate (images are in [0, 1])
                         score = ssim(synth_np, real_np, data_range=1.0)
                         current_ssim_scores.append(score)
 
@@ -475,7 +450,6 @@ class ResultsAnalyzer:
         print("\n--- Generating Grad-CAM Comparison --- ")
 
         try:
-            # --- Load Models --- #
             models = {}
             target_layers = {}
             for prefix in ['baseline_', 'augmented_', 'curriculum_']: # Add curriculum if exists
@@ -486,11 +460,10 @@ class ResultsAnalyzer:
                     model = create_resnet50_baseline(num_classes=2)
                     try:
                         model.load_state_dict(torch.load(model_path, map_location='cpu', weights_only=True))
-                        model = model.to(self.device)  # Move model to correct device
-                        model.eval()  # Set to eval mode
+                        model = model.to(self.device) 
+                        model.eval()
                         models[run_name] = model
-                        # Get the last convolutional layer for ResNet50
-                        target_layers[run_name] = [model.layer4[-1].conv3]  # Use the last conv layer in the last bottleneck
+                        target_layers[run_name] = [model.layer4[-1].conv3]
                     except Exception as e:
                         print(f"Warning: Failed to load model {model_path}: {e}")
                 else:
@@ -511,7 +484,7 @@ class ResultsAnalyzer:
 
             # --- Load Sample Images --- #
             real_metadata_path = self.data_dir / 'stage2_train_metadata.csv'
-            if not real_metadata_path.exists(): return # Already checked in SSIM
+            if not real_metadata_path.exists(): return
             real_df = pd.read_csv(real_metadata_path)
             real_df['label'] = (real_df['class'] == 'Lung Opacity').astype(int)
 
@@ -532,7 +505,6 @@ class ResultsAnalyzer:
                 synthetic_samples
             )
 
-            # Preprocessing transform (use the validation/test transform)
             preprocess = data_transforms['test']
 
             # --- Generate CAMs for Samples --- #
@@ -548,51 +520,40 @@ class ResultsAnalyzer:
                     img_path = self.data_dir / 'Training' / 'Images' / f"{patient_id}.png"
 
                 try:
-                    # Ensure image is loaded and converted to RGB properly
                     rgb_img = Image.open(img_path).convert('RGB')
                     rgb_img_resized = rgb_img.resize((224, 224))
                     rgb_img_np = np.array(rgb_img_resized) / 255.0
 
-                    # Ensure input tensor is properly preprocessed and on correct device
                     input_tensor = preprocess(rgb_img).unsqueeze(0)
                     input_tensor = input_tensor.to(self.device)
                     
-                    # Create figure before generating CAMs
                     fig, axes = plt.subplots(1, 1 + len(models), figsize=(5 * (1 + len(models)), 5))
                     if len(models) == 1:
                         axes = [axes]
                     elif not isinstance(axes, np.ndarray):
                         axes = [axes]
 
-                    # Plot original image
                     axes[0].imshow(rgb_img_np)
                     axes[0].set_title(f"Original ({sample_type})\nID: {patient_id}, Label: {label}")
                     axes[0].axis('off')
 
-                    # Generate CAMs for each model
                     for i, (run_name, model) in enumerate(models.items()):
-                        # Get model prediction
-                        with torch.no_grad():  # No need for gradients during prediction
+                        with torch.no_grad():
                             output = model(input_tensor)
                             pred_label = output.argmax(dim=1).item()
                         
-                        # Enable gradients only for GradCAM
                         input_tensor.requires_grad = True
                         
-                        # Use predicted label for visualization
                         target_category = [ClassifierOutputTarget(pred_label)]
                         
-                        # Generate CAM
                         try:
                             grayscale_cam = cams[run_name](input_tensor=input_tensor,
                                                          targets=target_category,
-                                                         eigen_smooth=True)  # Enable eigen smoothing
+                                                         eigen_smooth=True)
                             grayscale_cam = grayscale_cam[0, :]
                             
-                            # Create visualization
                             visualization = show_cam_on_image(rgb_img_np, grayscale_cam, use_rgb=True)
                             
-                            # Plot CAM
                             axes[i+1].imshow(visualization)
                             axes[i+1].set_title(f"{run_name.title()} CAM\nPred: {pred_label}, True: {label}")
                             axes[i+1].axis('off')

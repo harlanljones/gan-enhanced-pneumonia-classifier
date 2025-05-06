@@ -13,17 +13,15 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import re # For parsing curriculum schedule
 
-# Project specific imports
 from data_loader import (
     get_dataloaders, get_kfold_dataloaders,
-    get_simple_augmented_dataloaders, get_simple_augmented_kfold_dataloaders, # Keep originals
-    get_phased_augmented_kfold_dataloaders, # New phased loader
-    PhasedAugmentedDataset # Import Dataset class if needed
+    get_simple_augmented_dataloaders, get_simple_augmented_kfold_dataloaders, 
+    get_phased_augmented_kfold_dataloaders, 
+    PhasedAugmentedDataset 
 )
 from classifier import create_resnet50_baseline
-from utils import check_create_dir # Assuming check_create_dir is in utils.py
+from utils import check_create_dir
 
 # --- Curriculum Schedule Parsing ---
 def parse_curriculum_schedule(schedule_str: str) -> dict:
@@ -42,12 +40,10 @@ def parse_curriculum_schedule(schedule_str: str) -> dict:
             if not (0.0 <= ratio <= 1.0):
                 raise ValueError(f"Ratio must be between 0.0 and 1.0: {ratio}")
             schedule[epoch] = ratio
-        # Sort by epoch
         schedule = dict(sorted(schedule.items()))
-        # Ensure epoch 0 has an entry if not explicitly provided
         if 0 not in schedule:
             schedule[0] = 0.0
-            schedule = dict(sorted(schedule.items())) # Re-sort
+            schedule = dict(sorted(schedule.items())) 
         return schedule
     except Exception as e:
         raise ValueError(f"Invalid curriculum schedule format: '{schedule_str}'. Error: {e}. Expected format: 'epoch1:ratio1, epoch2:ratio2,...'")
@@ -58,11 +54,9 @@ def get_current_synthetic_ratio(epoch: int, schedule: dict) -> float:
         return 0.0 # Default to no synthetic data if no schedule
 
     current_ratio = 0.0
-    # Find the latest epoch in the schedule that is less than or equal to the current epoch
     applicable_epochs = [e for e in schedule.keys() if e <= epoch]
     if applicable_epochs:
         current_ratio = schedule[max(applicable_epochs)]
-    # Use ratio from epoch 0 if current epoch is before the first scheduled change
     elif 0 in schedule:
         current_ratio = schedule[0]
 
@@ -111,11 +105,9 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
     check_create_dir(results_save_path)
 
     fold_prefix = f"fold_{fold}_" if fold is not None else ""
-    # Adjust prefix based on whether curriculum or simple augmentation is used
     aug_type = "curriculum" if use_synthetic and curriculum_schedule else ("augmented" if use_synthetic else "baseline")
     run_prefix = f"{fold_prefix}{aug_type}_"
 
-    # Get reference to the training dataset if using curriculum
     train_dataset = None
     if use_synthetic and curriculum_schedule and isinstance(dataloaders['train'], DataLoader) and hasattr(dataloaders['train'].dataset, 'set_synthetic_ratio'):
         train_dataset = dataloaders['train'].dataset
@@ -130,64 +122,51 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
         print(f'Epoch {epoch+1}/{num_epochs}')
         print('-' * 10)
 
-        # Update synthetic ratio if using curriculum
         current_ratio = 0.0
         if train_dataset and curriculum_schedule:
             current_ratio = get_current_synthetic_ratio(epoch, curriculum_schedule)
             train_dataset.set_synthetic_ratio(current_ratio)
         elif use_synthetic and not curriculum_schedule:
-            # If using simple augmentation, ratio is effectively determined by ConcatDataset size
-            # For tracking, we consider it 1.0 since all synthetic data is used
             current_ratio = 1.0 if isinstance(dataloaders['train'].dataset, torch.utils.data.ConcatDataset) else 0.0
 
-        history['epoch'].append(epoch + 1)  # Add epoch number (1-based)
+        history['epoch'].append(epoch + 1) 
         history['synthetic_ratio'].append(current_ratio)
         print(f"Current Synthetic Ratio: {current_ratio:.2f}")
 
-        # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
             if phase == 'train':
-                model.train()  # Set model to training mode
+                model.train() 
             else:
-                model.eval()   # Set model to evaluate mode
+                model.eval()
 
             running_loss = 0.0
             all_preds = []
             all_labels = []
 
-            # Use tqdm for progress bar
-            data_loader = dataloaders[phase] # Use the correct key ('train' or 'val')
+            data_loader = dataloaders[phase]
             progress_bar = tqdm(data_loader, desc=f'{phase.capitalize()} Epoch {epoch+1}', leave=False)
 
             for inputs, labels in progress_bar:
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
-                # Zero the parameter gradients
                 optimizer.zero_grad()
 
-                # Forward
-                # Track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
                     loss = criterion(outputs, labels)
 
-                    # Backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
                         optimizer.step()
 
-                # Statistics
                 running_loss += loss.item() * inputs.size(0)
                 all_preds.extend(preds.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
 
-                # Update progress bar
                 progress_bar.set_postfix(loss=loss.item())
 
-            # Calculate epoch loss and accuracy
-            # Need dataset size for the current phase
             epoch_samples = len(data_loader.dataset)
             epoch_loss = running_loss / epoch_samples
             epoch_acc = accuracy_score(all_labels, all_preds)
@@ -197,17 +176,15 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
 
             print(f'{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
 
-            # Deep copy the model if it's the best validation accuracy so far
             if phase == 'val' and epoch_acc > best_acc:
                 best_acc = epoch_acc
                 best_model_wts = model.state_dict()
-                # Save the best model checkpoint for this fold/run
                 best_model_filename = os.path.join(model_save_path, f'{run_prefix}resnet50.pth')
                 torch.save(best_model_wts, best_model_filename)
                 print(f"Saved best model checkpoint to {best_model_filename}")
 
-        if scheduler and phase == 'train': # Scheduler step usually after training phase or validation phase
-             scheduler.step() # Assuming StepLR or similar
+        if scheduler and phase == 'train':
+             scheduler.step()
 
         epoch_time = time.time() - epoch_start
         print(f"Epoch completed in {epoch_time // 60:.0f}m {epoch_time % 60:.0f}s")
@@ -217,13 +194,11 @@ def train_model(model, criterion, optimizer, dataloaders, device, num_epochs=25,
     print(f'Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
     print(f'Best val Acc: {best_acc:4f}')
 
-    # Save training history
     history_filename = os.path.join(results_save_path, f'{run_prefix}training_history.json')
     with open(history_filename, 'w') as f:
         json.dump(history, f, indent=4)
     print(f"Saved training history to {history_filename}")
 
-    # Load best model weights
     model.load_state_dict(best_model_wts)
     return model, history
 
@@ -240,7 +215,7 @@ def evaluate_model(model, dataloader, device, criterion):
     Returns:
         dict: Dictionary containing evaluation metrics (loss, accuracy, precision, recall, f1).
     """
-    model.eval() # Set model to evaluate mode
+    model.eval()
     running_loss = 0.0
     all_preds = []
     all_labels = []
@@ -261,10 +236,7 @@ def evaluate_model(model, dataloader, device, criterion):
 
     eval_loss = running_loss / len(dataloader.dataset)
     eval_accuracy = accuracy_score(all_labels, all_preds)
-    # Calculate weighted metrics to account for class imbalance
     precision_w, recall_w, f1_w, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted', zero_division=0)
-    # Keep binary metrics if needed for specific positive class analysis (optional)
-    # precision_b, recall_b, f1_b, _ = precision_recall_fscore_support(all_labels, all_preds, average='binary', zero_division=0)
 
     metrics = {
         'loss': eval_loss,
@@ -272,9 +244,6 @@ def evaluate_model(model, dataloader, device, criterion):
         'weighted_precision': precision_w,
         'weighted_recall': recall_w,
         'weighted_f1_score': f1_w
-        # 'binary_precision': precision_b, # Uncomment if needed
-        # 'binary_recall': recall_b,     # Uncomment if needed
-        # 'binary_f1_score': f1_b        # Uncomment if needed
     }
 
     print(f"Evaluation Results - Loss: {eval_loss:.4f}, Accuracy: {eval_accuracy:.4f}, Weighted Precision: {precision_w:.4f}, Weighted Recall: {recall_w:.4f}, Weighted F1: {f1_w:.4f}")
@@ -297,7 +266,6 @@ def load_history(filepath, run_prefix):
     try:
         with open(history_filename, 'r') as f:
             history = json.load(f)
-        # Ensure all lists have the same length, padding if necessary
         max_len = 0
         valid_keys = [k for k, v in history.items() if isinstance(v, list)]
         for key in valid_keys:
@@ -322,14 +290,11 @@ def plot_metric(histories, metric_key, title, ylabel, output_path, run_prefix=""
     """Plot training and validation metrics."""
     plt.figure(figsize=(10, 6))
     
-    # For storing metrics
     train_metrics = []
     val_metrics = []
     
-    # Process each history
     for history in histories:
         if plot_ratio:
-            # For synthetic ratio plots
             if 'synthetic_ratio' not in history:
                 continue
             values = history['synthetic_ratio']
@@ -338,7 +303,6 @@ def plot_metric(histories, metric_key, title, ylabel, output_path, run_prefix=""
                     label=f'Fold {history.get("fold", "")}' if 'fold' in history else 'Ratio')
             train_metrics.append(values)
         else:
-            # For regular metric plots (loss, accuracy)
             if metric_key not in history:
                 continue
             
@@ -361,8 +325,7 @@ def plot_metric(histories, metric_key, title, ylabel, output_path, run_prefix=""
     if not train_metrics:
         raise ValueError(f"No valid data found for metric: {metric_key}")
     
-    # Plot average lines
-    epochs = range(1, len(train_metrics[0]) + 1)  # Assume all histories have same length after padding
+    epochs = range(1, len(train_metrics[0]) + 1) 
     
     if plot_ratio:
         ratio_avg = np.mean(train_metrics, axis=0)
@@ -402,7 +365,6 @@ def plot_cv_summary(cv_summary_path, output_dir, run_prefix):
         print("Warning: No valid 'folds' or 'average' key found in CV summary.")
         return
 
-    # Define the metrics we want to plot (excluding loss which will be plotted separately)
     metric_mapping = {
         'accuracy': 'Accuracy',
         'weighted_precision': 'Precision',
@@ -416,13 +378,12 @@ def plot_cv_summary(cv_summary_path, output_dir, run_prefix):
 
     # --- Plot 1: Primary Metrics (Accuracy, Precision, Recall, F1) ---
     plt.figure(figsize=(12, 7))
-    bar_width = 0.2  # Width of each bar
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']  # Different color for each metric
+    bar_width = 0.2  
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'] 
 
     for i, (metric_key, metric_label) in enumerate(metric_mapping.items()):
         values = [fold_metrics.get(metric_key, 0.0) for fold_metrics in cv_results['folds']]
         
-        # Plot bars for this metric
         bars = plt.bar(index + i * bar_width - (len(metric_mapping)-1) * bar_width/2,
                       values,
                       bar_width,
@@ -430,7 +391,6 @@ def plot_cv_summary(cv_summary_path, output_dir, run_prefix):
                       color=colors[i],
                       alpha=0.8)
 
-        # Add average line for this metric
         if metric_key in cv_results['average']:
             avg_value = cv_results['average'][metric_key]
             plt.hlines(avg_value,
@@ -461,7 +421,6 @@ def plot_cv_summary(cv_summary_path, output_dir, run_prefix):
         if not all(np.isnan(loss_values)):
             plt.bar(index, loss_values, color='#1f77b4', alpha=0.8, label='Test Loss')
 
-            # Plot average loss line
             if 'loss' in cv_results['average']:
                 avg_loss = cv_results['average']['loss']
                 plt.hlines(avg_loss,
@@ -499,11 +458,10 @@ def generate_plots(metrics_dir, figures_dir, run_prefix="", k_folds=None):
 
     if k_folds and k_folds > 1:
         print(f"Generating plots for {k_folds}-Fold CV run: {run_prefix}...")
-        for fold in range(1, k_folds + 1):  # Folds are 1-based in filenames
+        for fold in range(1, k_folds + 1): 
             fold_run_prefix = f"fold_{fold}_{run_prefix}"
             history = load_history(metrics_dir, fold_run_prefix)
             if history:
-                # Add fold number to history for reference
                 history['fold'] = fold
                 histories.append(history)
         if not histories:
@@ -568,7 +526,7 @@ def main(args):
     # --- Data Loading --- #
     fold_dataloaders_list = None
     test_loader = None
-    train_loader = None # For non-CV case
+    train_loader = None 
     is_cv = args.k_folds > 1
 
     curriculum_schedule = None
@@ -581,12 +539,11 @@ def main(args):
                 print(f"Parsed curriculum schedule: {curriculum_schedule}")
                 if not curriculum_schedule:
                      print("Warning: --use-curriculum specified but schedule is empty or invalid. Using simple augmentation.")
-                     args.use_curriculum = False # Fallback to simple augmentation
+                     args.use_curriculum = False
             except ValueError as e:
                 print(f"Error parsing curriculum schedule: {e}. Aborting.")
                 return
 
-    # Determine run prefix early for consistent naming
     aug_type = "curriculum" if args.use_synthetic and args.use_curriculum and curriculum_schedule else ("augmented" if args.use_synthetic else "baseline")
     base_run_prefix = f"{aug_type}_"
 
@@ -619,8 +576,6 @@ def main(args):
             if args.use_synthetic:
                  if args.use_curriculum:
                       print("Warning: Curriculum learning typically uses K-Fold CV. Running on single split.")
-                      # Need a non-CV version of phased loader or adapt CV version
-                      # For simplicity, let's fall back to simple augmentation for non-CV curriculum for now
                       print("Falling back to Simple Augmented DataLoaders for non-CV curriculum run...")
                       train_loader, test_loader = get_simple_augmented_dataloaders(
                           data_dir=args.data_dir, synthetic_dir=args.synthetic_dir,
@@ -634,14 +589,10 @@ def main(args):
                 )
             else:
                 print("Using Baseline DataLoaders...")
-                # Assuming get_dataloaders provides a dict {'train': loader, 'val': loader} or similar
-                # Let's assume get_dataloaders returns train_loader, test_loader directly
-                # We might need a validation split for non-CV training
-                # TEMPORARY: Use test set as validation for non-CV run - NEEDS REVISION
                 print("Warning: Using test set as validation for non-CV run. Create a proper validation split.")
                 _train_loader, _test_loader = get_dataloaders(args.data_dir, batch_size=args.batch_size, num_workers=args.workers)
                 dataloaders = {'train': _train_loader, 'val': _test_loader}
-                test_loader = _test_loader # Keep separate test loader if needed later
+                test_loader = _test_loader
 
     except FileNotFoundError as e:
         print(f"Error loading data: {e}")
@@ -662,11 +613,6 @@ def main(args):
             model = create_resnet50_baseline(num_classes=2, freeze_base=not args.unfreeze).to(device)
             optimizer = optim.Adam(model.parameters(), lr=args.lr)
             criterion = nn.CrossEntropyLoss()
-            # Optional: LR scheduler
-            # exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
-
-            # Get dataloaders for the current fold
-            # Adjust based on whether phased loader returns dict with 'train_loader' or just loaders
             current_fold_loaders = {}
             if args.use_curriculum and args.use_synthetic and curriculum_schedule:
                  current_fold_loaders = {
@@ -674,18 +620,16 @@ def main(args):
                      'val': fold_dataloaders_list[fold]['val_loader']
                  }
             else:
-                 current_fold_loaders = fold_dataloaders_list[fold] # Assumes dict {'train':..., 'val':...}
+                 current_fold_loaders = fold_dataloaders_list[fold]
 
-            # Pass curriculum schedule to train_model
             fold_model, fold_history = train_model(
                 model, criterion, optimizer, current_fold_loaders, device,
-                num_epochs=args.epochs, scheduler=None, # exp_lr_scheduler,
+                num_epochs=args.epochs, scheduler=None,
                 model_save_path=args.model_dir, results_save_path=args.results_dir,
                 fold=(fold + 1), use_synthetic=args.use_synthetic, curriculum_schedule=curriculum_schedule
             )
             all_fold_histories.append(fold_history)
 
-            # Evaluate on the held-out test set after each fold training
             print(f"\n--- Evaluating Fold {fold + 1} Model on Test Set ---")
             fold_test_metrics = evaluate_model(fold_model, test_loader, device, criterion)
             all_fold_metrics.append(fold_test_metrics)
@@ -723,7 +667,6 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
         # scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
-        # Pass curriculum schedule (even if None/empty)
         final_model, history = train_model(
             model, criterion, optimizer, dataloaders, device,
             num_epochs=args.epochs, scheduler=None, # scheduler,

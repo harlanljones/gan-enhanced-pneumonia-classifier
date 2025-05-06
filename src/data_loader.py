@@ -10,16 +10,14 @@ import pandas as pd
 from PIL import Image
 import math
 
-# Get the absolute path of the project root directory
 ROOT_DIR = Path(__file__).parent.parent.absolute()
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 
-# Define transformations for ResNet50
 data_transforms = {
     'train': transforms.Compose([
-        transforms.Resize((224, 224)), # ResNet50 input size
-        transforms.RandomHorizontalFlip(), # Basic augmentation
+        transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -54,7 +52,6 @@ class SyntheticDataset(Dataset):
             image = Image.open(img_path).convert('RGB')
         except Exception as e:
             print(f"Warning: Error loading synthetic image {img_path}: {e}")
-            # Return a black image as a fallback
             image = Image.new('RGB', (224, 224), color='black')
 
         if self.transform:
@@ -83,7 +80,6 @@ class RSNAPneumoniaDataset(Dataset):
         print("Total samples:", len(self.metadata))
         
         if not is_test:
-            # Training data has class labels
             class_counts = self.metadata['class'].value_counts()
             print("Class distribution:")
             for class_name, count in class_counts.items():
@@ -94,9 +90,6 @@ class RSNAPneumoniaDataset(Dataset):
             # - Everything else -> 0 (Not Pneumonia)
             self.metadata['label'] = (self.metadata['class'] == 'Lung Opacity').astype(int)
         else:
-            # Test data has PredictionString column
-            # Format: "confidence x y width height" or empty for no finding
-            # We'll consider any non-empty PredictionString as a positive case (1)
             self.metadata['label'] = (self.metadata['PredictionString'].str.strip() != '0.5 0 0 100 100').astype(int)
             label_counts = self.metadata['label'].value_counts()
             print("Label distribution:")
@@ -114,7 +107,6 @@ class RSNAPneumoniaDataset(Dataset):
             image = Image.open(img_path).convert('RGB')
         except FileNotFoundError:
             print(f"Warning: Image not found: {img_path}")
-            # Return a black image as a fallback
             image = Image.new('RGB', (224, 224), color='black')
         
         label = self.metadata.iloc[idx]['label']
@@ -134,7 +126,6 @@ def check_dataset_availability(data_dir=PROCESSED_DIR):
     Returns:
         bool: True if the dataset is available, False otherwise
     """
-    # Check for required files and directories
     train_metadata = os.path.join(data_dir, 'stage2_train_metadata.csv')
     test_metadata = os.path.join(data_dir, 'stage2_test_metadata.csv')
     train_dir = os.path.join(data_dir, 'Training', 'Images')
@@ -151,7 +142,6 @@ def check_dataset_availability(data_dir=PROCESSED_DIR):
         print("python src/download_dataset.py")
         return False
     
-    # Check if there are images in the directories
     train_images = [f for f in os.listdir(train_dir) if f.endswith('.png')]
     test_images = [f for f in os.listdir(test_dir) if f.endswith('.png')]
     
@@ -318,10 +308,10 @@ def get_augmented_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir='data/synthe
         is_test=False
     )
 
-    # Create synthetic dataset (assuming label 1 for pneumonia)
+    # Create synthetic dataset
     synthetic_dataset = SyntheticDataset(
         synthetic_dir,
-        transform=data_transforms['train'] # Use same transforms as training
+        transform=data_transforms['train']
     )
 
     # Combine original training and synthetic datasets
@@ -380,14 +370,14 @@ def get_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir='data/
     full_train_dataset = RSNAPneumoniaDataset(
         os.path.join(data_dir, 'Training', 'Images'),
         os.path.join(data_dir, 'stage2_train_metadata.csv'),
-        transform=data_transforms['train'], # Base transforms for subset creation
+        transform=data_transforms['train'],
         is_test=False
     )
 
     # Create synthetic dataset (to be added to each training fold)
     synthetic_dataset = SyntheticDataset(
         synthetic_dir,
-        transform=data_transforms['train'] # Use same transforms as training
+        transform=data_transforms['train']
     )
     print(f"Synthetic dataset size: {len(synthetic_dataset)}")
 
@@ -410,21 +400,18 @@ def get_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir='data/
         print(f"\nFold {fold+1}/{k_folds}")
 
         # --- Create Training Subset (Original) ---
-        # Need to wrap Subset with a dataset applying TRAIN transforms
         train_subset_original = torch.utils.data.Subset(full_train_dataset, train_idx)
 
         # --- Augment Training Subset ---
-        # Combine the original training subset with ALL synthetic images
         augmented_train_fold_dataset = torch.utils.data.ConcatDataset([train_subset_original, synthetic_dataset])
         print(f"  Augmented Train Fold Size: {len(augmented_train_fold_dataset)} (Original: {len(train_subset_original)}, Synthetic: {len(synthetic_dataset)})")
 
 
         # --- Create Validation Subset (Original) ---
-        # Create a separate dataset instance for validation subset with TEST transforms
         val_dataset_instance = RSNAPneumoniaDataset(
             os.path.join(data_dir, 'Training', 'Images'),
             os.path.join(data_dir, 'stage2_train_metadata.csv'),
-            transform=data_transforms['test'], # Use test transforms for validation
+            transform=data_transforms['test'],
             is_test=False
         )
         val_subset = torch.utils.data.Subset(val_dataset_instance, val_idx)
@@ -474,15 +461,12 @@ class PhasedAugmentedDataset(Dataset):
         self.synthetic_dataset = synthetic_dataset
         self._set_synthetic_ratio(synthetic_ratio)
 
-        # Pre-calculate indices for faster sampling
         self.real_positive_indices = []
         self.real_negative_indices = []
         try:
             print("Calculating positive/negative indices for real dataset...")
             
-            # Check if we're dealing with RSNAPneumoniaDataset or its Subset
             if isinstance(real_dataset, Subset) and isinstance(real_dataset.dataset, RSNAPneumoniaDataset):
-                # For Subset of RSNAPneumoniaDataset, use metadata but only for subset indices
                 base_dataset = real_dataset.dataset
                 subset_indices = real_dataset.indices
                 for idx in subset_indices:
@@ -492,14 +476,12 @@ class PhasedAugmentedDataset(Dataset):
                     else:
                         self.real_negative_indices.append(idx)
             elif isinstance(real_dataset, RSNAPneumoniaDataset):
-                # For direct RSNAPneumoniaDataset, use metadata directly
                 for idx, row in real_dataset.metadata.iterrows():
                     if row['label'] == 1:
                         self.real_positive_indices.append(idx)
                     else:
                         self.real_negative_indices.append(idx)
             else:
-                # Fallback for other dataset types: iterate through dataset
                 print("Warning: Dataset type not optimized, falling back to iteration...")
                 for i in range(len(real_dataset)):
                     item = real_dataset[i]
@@ -521,8 +503,8 @@ class PhasedAugmentedDataset(Dataset):
 
         except Exception as e:
             print(f"Warning: Could not pre-calculate positive/negative indices for real dataset: {e}. Sampling randomly.")
-            self.real_positive_indices = list(range(len(real_dataset)))  # Fallback
-            self.real_negative_indices = []  # Cannot guarantee negative samples
+            self.real_positive_indices = list(range(len(real_dataset)))
+            self.real_negative_indices = []
 
         if not self.synthetic_dataset:
             print("Warning: Synthetic dataset is empty or None.")
@@ -536,38 +518,23 @@ class PhasedAugmentedDataset(Dataset):
         self._set_synthetic_ratio(synthetic_ratio)
 
     def __len__(self):
-        # Effective length balances real and synthetic based on the ratio.
-        # A common strategy is to keep the total number of positive samples roughly constant
-        # or scale based on the real dataset size. Here, let's aim to keep epoch size
-        # similar to the real dataset, adjusting the mix within batches.
-        # The DataLoader will handle batch creation. The dataset length itself
-        # can represent the pool we draw from. Let's use the real dataset length.
         return len(self.real_dataset)
 
 
     def __getitem__(self, idx):
-        # This idx is mainly used by the DataLoader's sampler.
-        # We override the sampling logic here based on the ratio.
-
         # Determine if the sample should be synthetic based on the ratio
         if np.random.rand() < self.synthetic_ratio:
-            # Fetch a synthetic sample (always positive class)
             if len(self.synthetic_dataset) > 0:
                 synth_idx = np.random.randint(len(self.synthetic_dataset))
                 return self.synthetic_dataset[synth_idx]
             else:
-                # Fallback if synthetic dataset is empty: fetch a real positive sample
                  if self.real_positive_indices:
                      real_idx = np.random.choice(self.real_positive_indices)
                      return self.real_dataset[real_idx]
                  else:
-                     # Fallback: fetch any real sample if no positives known
                      real_idx = np.random.randint(len(self.real_dataset))
                      return self.real_dataset[real_idx]
         else:
-            # Fetch a real sample (maintain original class distribution for the real part)
-            # Use the provided idx (modulo length) to sample from real dataset,
-            # respecting the sampler's intention if possible (e.g., for shuffling).
             real_idx = idx % len(self.real_dataset)
             return self.real_dataset[real_idx]
 
@@ -598,14 +565,13 @@ def get_simple_augmented_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir=os.pa
     # Create synthetic dataset
     synthetic_dataset = SyntheticDataset(
         synthetic_dir,
-        transform=data_transforms['train'] # Apply training transforms
+        transform=data_transforms['train']
     )
 
     if len(synthetic_dataset) == 0:
         print("Warning: No synthetic images found. Training with real data only.")
         augmented_train_dataset = train_dataset_real
     else:
-        # Combine real training data and synthetic data
         augmented_train_dataset = ConcatDataset([train_dataset_real, synthetic_dataset])
 
     # Create data loaders
@@ -669,7 +635,6 @@ def get_simple_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir
         # Create subsets for real train and validation
         real_train_subset = Subset(full_train_dataset_real, train_idx)
         real_val_subset = Subset(full_train_dataset_real, val_idx)
-        # Important: Apply test transform to validation set
         real_val_subset.dataset.transform = data_transforms['test']
 
         # Combine real training subset with *all* synthetic data for this fold
@@ -689,7 +654,6 @@ def get_simple_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir
 
         fold_dataloaders.append({'train': fold_train_loader, 'val': fold_val_loader})
         print(f"Fold {fold+1} - Train size: {len(fold_train_dataset)}, Val size: {len(real_val_subset)}")
-        # Reset transform for next fold if validation set modified it
         real_val_subset.dataset.transform = data_transforms['train']
 
 
@@ -748,8 +712,7 @@ def get_phased_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir
         # Create subsets for real train and validation
         real_train_subset = Subset(full_train_dataset_real, train_idx)
         real_val_subset = Subset(full_train_dataset_real, val_idx)
-        # Important: Apply test transform to validation set
-        real_val_subset.dataset.transform = data_transforms['test'] # Apply test transform
+        real_val_subset.dataset.transform = data_transforms['test']
 
         # Create PhasedAugmentedDataset for this fold's training
         fold_train_phased_dataset = PhasedAugmentedDataset(
@@ -771,11 +734,10 @@ def get_phased_augmented_kfold_dataloaders(data_dir=PROCESSED_DIR, synthetic_dir
         fold_dataloaders.append({
             'train_loader': fold_train_loader,
             'val_loader': fold_val_loader,
-            'train_dataset': fold_train_phased_dataset # Reference to the dataset
+            'train_dataset': fold_train_phased_dataset 
         })
         print(f"Fold {fold+1} - Real Train size: {len(real_train_subset)}, Val size: {len(real_val_subset)}")
         print(f"Fold {fold+1} - Initial synthetic ratio: {initial_synthetic_ratio:.2f}")
-        # Reset transform for next fold if validation set modified it
         real_val_subset.dataset.transform = data_transforms['train']
 
 
@@ -814,7 +776,6 @@ if __name__ == '__main__':
             train_loader, test_loader = get_dataloaders(args.data_dir, batch_size=args.batch_size)
             print(f"Train batches: {len(train_loader)}, Test batches: {len(test_loader)}")
             
-            # Sample a batch to verify data format
             print("\nSampling a batch from train_loader...")
             dataiter = iter(train_loader)
             images, labels = next(dataiter)
@@ -832,7 +793,6 @@ if __name__ == '__main__':
             print(f"Generated {len(fold_loaders)} folds.")
             print(f"Fold 1 - Train batches: {len(fold_loaders[0]['train'])}, Val batches: {len(fold_loaders[0]['val'])}")
             
-            # Sample a batch from first fold to verify data format
             print("\nSampling a batch from fold 1 train_loader...")
             dataiter = iter(fold_loaders[0]['train'])
             images, labels = next(dataiter)

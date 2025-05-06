@@ -12,13 +12,13 @@
   - F1 Score (Weighted) : 0.8437 ± 0.0521
 
 * Augmented:
-  - Accuracy            : 0.8270 ± 0.0769 (+12.8% vs Baseline Avg)
-  - Precision (Weighted): 1.0000 ± 0.0000 (+0.0% vs Baseline Avg)
-  - Recall (Weighted)   : 0.8270 ± 0.0769 (+12.8% vs Baseline Avg)
-  - F1 Score (Weighted) : 0.9033 ± 0.0474 (+7.1% vs Baseline Avg)
+  - Accuracy            : 0.8270 ± 0.0769 (+9.4 percentage points vs Baseline Avg)
+  - Precision (Weighted): 1.0000 ± 0.0000 (+0.0 percentage points vs Baseline Avg)
+  - Recall (Weighted)   : 0.8270 ± 0.0769 (+9.4 percentage points vs Baseline Avg)
+  - F1 Score (Weighted) : 0.9033 ± 0.0474 (+6.0 percentage points vs Baseline Avg)
 
 * Curriculum:
-  - Accuracy            : 0.7357 ± 0.1025 (+0.3% vs Baseline Avg)
-  - Precision (Weighted): 1.0000 ± 0.0000 (+0.0% vs Baseline Avg)
-  - Recall (Weighted)   : 0.7357 ± 0.1025 (+0.3% vs Baseline Avg)
-  - F1 Score (Weighted) : 0.8439 ± 0.0652 (+0.0% vs Baseline Avg)
+  - Accuracy            : 0.8039 ± 0.0326 (+7.1 percentage points vs Baseline Avg)
+  - Precision (Weighted): 1.0000 ± 0.0000 (+0.0 percentage points vs Baseline Avg)
+  - Recall (Weighted)   : 0.8039 ± 0.0326 (+7.1 percentage points vs Baseline Avg)
+  - F1 Score (Weighted) : 0.8909 ± 0.0205 (+4.7 percentage points vs Baseline Avg)
