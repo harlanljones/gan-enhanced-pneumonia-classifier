@@ -23,7 +23,8 @@ Enhancing Pneumonia Detection with GAN-Generated Synthetic Chest X-rays
   - [Performance Comparison](#performance-comparison)
   - [Synthetic Image Quality Analysis](#synthetic-image-quality-analysis)
   - [Conclusion](#conclusion)
-- [References](#8-references)
+- [Contributions](#9-contributions)
+- [References](#10-references)
 
 ## 1. Task
 This project seeks to create realistic synthetic X-ray images of lungs with pneumonia using a Generative Adversarial Network (GAN) and assess their effect on enhancing a deep learning classifier's performance. By enriching the dataset with high-quality synthetic images, we aim to boost model accuracy and generalization, especially in scenarios with scarce medical data. The difficulty is in ensuring these images maintain authentic anatomical features and pneumonia-specific traits, like lung opacities, while preventing artifacts that might confuse the classifier. The synthetic images must faithfully represent pneumonia signs without adding deceptive patterns that could harm classifier effectiveness.  
@@ -509,7 +510,14 @@ Training curves illustrate the learning progression for each strategy:
 ### Conclusion
 Our results indicate that incorporating GAN-generated synthetic images significantly improves the performance of the pneumonia classifier compared to training only on the original data. Both the direct augmentation and curriculum learning strategies led to substantial gains in accuracy and other key metrics during cross-validation, as detailed in `results/analysis/comparison_report.txt`. While the direct augmentation showed slightly higher average accuracy in this particular set of experiments (82.7% vs 80.4% for curriculum and 73.3% for baseline), both methods demonstrate the value of GANs for enhancing medical image classification tasks, especially when data is limited. The SSIM and Grad-CAM analyses provide insights into the quality and impact of the synthetic data, guiding potential future improvements in GAN architecture or training.
 
-## 8. References
+## 8. Contributions
+
+| Name   | Task                                                                                                | File names                                                                                                                                                                                             | Approx. Lines of Code |
+| :----- | :-------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------- |
+| Harlan | Data preprocessing<br>Classifier implementation<br>DCGAN implementation<br>Analysis scripts           | `download_dataset.py` (79)<br>`data_loader.py` (812)<br>`classifier.py` (62)<br>`dcgan.py` (122)<br>`generate_synthetic.py` (90)<br>`analyze_results.py` (657)                                                | 1822                  |
+| Thai   | Classifier training<br>DCGAN training<br>CGAN implementation & training<br>WGAN-GP implementation & training | `train_classifier.py` (748)<br>`train_gan.py` (250)<br>`cgan.py` (137)<br>`train_cgan.py` (275)<br>`generate_synthetic_cgan.py` (85)<br>`wggan.py` (90)<br>`train_wggan.py` (156)<br>`generate_synthetic_wgan.py` (84) | 1825                  |
+
+## 9. References
 [1] Goodfellow, I., et al. (2014). Generative Adversarial Nets. *Advances in Neural Information Processing Systems*.
 
 [2] Frid-Adar, M., et al. (2018). GAN-based synthetic medical image augmentation for increased CNN performance in liver lesion classification. *Neurocomputing*.
