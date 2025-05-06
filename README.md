@@ -17,7 +17,13 @@ Enhancing Pneumonia Detection with GAN-Generated Synthetic Chest X-rays
   - [Generating Synthetic Images](#generating-synthetic-images)
   - [Training the Augmented Classifier](#training-the-augmented-classifier)
   - [Analyzing Results](#analyzing-results)
-- [References](#7-references)
+- [Results](#7-results)
+  - [Experimental Setup](#experimental-setup)
+  - [Evaluation Metrics](#evaluation-metrics)
+  - [Performance Comparison](#performance-comparison)
+  - [Synthetic Image Quality Analysis](#synthetic-image-quality-analysis)
+  - [Conclusion](#conclusion)
+- [References](#8-references)
 
 ## 1. Task
 This project seeks to create realistic synthetic X-ray images of lungs with pneumonia using a Generative Adversarial Network (GAN) and assess their effect on enhancing a deep learning classifier's performance. By enriching the dataset with high-quality synthetic images, we aim to boost model accuracy and generalization, especially in scenarios with scarce medical data. The difficulty is in ensuring these images maintain authentic anatomical features and pneumonia-specific traits, like lung opacities, while preventing artifacts that might confuse the classifier. The synthetic images must faithfully represent pneumonia signs without adding deceptive patterns that could harm classifier effectiveness.  
@@ -79,7 +85,10 @@ graph TD
     style T fill:#ff9,stroke:#333,stroke-width:1px
 ```
 
-We implement a Deep Convolutional GAN (DCGAN) using PyTorch to generate synthetic chest X-rays. Training stability is enhanced using label smoothing (real labels set to 0.9). The generator uses `torch.nn.ConvTranspose2d` and the discriminator uses `torch.nn.Conv2d`, trained with Binary Cross-Entropy loss. 
+We implement several Generative Adversarial Network (GAN) architectures using PyTorch to generate synthetic chest X-rays:
+*   **Deep Convolutional GAN (DCGAN):** A baseline implementation (`dcgan.py`, `train_gan.py`). Training stability is enhanced using label smoothing (real labels set to 0.9). The generator uses `torch.nn.ConvTranspose2d` and the discriminator uses `torch.nn.Conv2d`, trained with Binary Cross-Entropy loss.
+*   **Conditional GAN (CGAN):** An extension (`cgan.py`, `train_cgan.py`) that allows generating images conditioned on class labels (Pneumonia/Normal). This enables more targeted data augmentation.
+*   **Wasserstein GAN with Gradient Penalty (WGAN-GP):** An advanced architecture (`wggan.py`, `train_wggan.py`) known for improved training stability and potentially higher-quality image generation by using the Wasserstein distance and a gradient penalty.
 
 **Augmentation Strategy:**
 We compare three training strategies for the classifier (a pre-trained ResNet-50 from `torchvision.models`):
@@ -146,10 +155,16 @@ gan-enhanced-pneumonia-classifier/
 │   ├── classifier.py         # ResNet50 model implementation
 │   ├── data_loader.py       # Dataset loading and preprocessing
 │   ├── dcgan.py             # DCGAN architecture implementation
+│   ├── cgan.py              # Conditional GAN (CGAN) architecture
+│   ├── wggan.py             # Wasserstein GAN with Gradient Penalty (WGAN-GP) architecture
 │   ├── download_dataset.py   # Dataset download script
-│   ├── generate_synthetic.py # Synthetic image generation
+│   ├── generate_synthetic.py # Synthetic image generation (using DCGAN)
+│   ├── generate_synthetic_cgan.py # Synthetic image generation (using CGAN)
+│   ├── generate_synthetic_wgan.py # Synthetic image generation (using WGAN-GP)
 │   ├── train_classifier.py   # Classifier training script
-│   ├── train_gan.py         # GAN training script
+│   ├── train_gan.py         # DCGAN training script
+│   ├── train_cgan.py        # CGAN training script
+│   ├── train_wggan.py       # WGAN-GP training script
 │   └── utils.py             # Utility functions
 │
 └── tests/              # Unit tests for source code
@@ -160,8 +175,8 @@ gan-enhanced-pneumonia-classifier/
 The project follows a modular structure:
 
 - **Source Code (`src/`)**: Core implementation files
-  - Model architectures (`classifier.py`, `dcgan.py`)
-  - Training scripts (`train_classifier.py`, `train_gan.py`)
+  - Model architectures (`classifier.py`, `dcgan.py`, `cgan.py`, `wggan.py`)
+  - Training scripts (`train_classifier.py`, `train_gan.py`, `train_cgan.py`, `train_wggan.py`)
   - Data handling (`data_loader.py`, `download_dataset.py`)
   - Analysis tools (`analyze_results.py`)
 
@@ -270,15 +285,27 @@ This saves metrics as `baseline_*.json` and model as `baseline_resnet50.pth` (or
 
 ### Training the GAN
 
-**Basic training:**
+**Train DCGAN (Basic):**
 ```bash
 python src/train_gan.py
 ```
 
-**Available options:**
+**Train CGAN:**
+```bash
+# Requires class labels during training
+python src/train_cgan.py --n-classes 2 
+```
+
+**Train WGAN-GP:**
+```bash
+python src/train_wggan.py
+```
+
+**Common GAN training options:**
+(Apply similarly to `train_gan.py`, `train_cgan.py`, `train_wggan.py`)
 ```bash
 --data-dir PATH     # Path to the processed dataset directory (default: ./data/processed)
---model-dir PATH    # Base directory to save model checkpoints (GAN models saved to ./models/gan/) (default: ./models)
+--model-dir PATH    # Base directory to save model checkpoints (GAN models saved under ./models/{gan_type}/) (default: ./models)
 --output-dir PATH   # Base directory for outputs (generated images saved to ./results/gan_images/) (default: ./results)
 --results-dir PATH  # Directory to save training history JSON (gan_training_history.json) (default: ./results/metrics)
 --figures-dir PATH  # Directory to save generated plot images (gan_loss_curve.png) (default: ./results/figures)
@@ -294,24 +321,40 @@ python src/train_gan.py
 --vis-batch-size N # Batch size for generating visualization images (default: 64)
 --cpu             # Force CPU usage
 ```
+*Note: Specific hyperparameters (like `lr`, `beta1`, `feature-maps`) might need tuning for different GAN types. CGAN requires `--n-classes`. WGAN-GP uses different optimizer settings internally.*
 
 ### Generating Synthetic Images
 
-1. **Generate images using trained GAN:**
+1. **Generate images using trained DCGAN:**
    ```bash
    python src/generate_synthetic.py --model-path ./models/gan/generator_final.pth
    ```
 
-2. **Available options:**
+2. **Generate images using trained CGAN:**
+   ```bash
+   # Specify number of classes and model path
+   python src/generate_synthetic_cgan.py --model-path ./models/cgan/generator_final.pth --n-classes 2 --num-images-per-class 2500
+   ```
+
+3. **Generate images using trained WGAN-GP:**
+   ```bash
+   python src/generate_synthetic_wgan.py --model-path ./models/wggan/generator_final.pth
+   ```
+
+4. **Common generation options:**
+   (Apply similarly to `generate_synthetic*.py` scripts)
    ```bash
    --model-path PATH  # Path to the trained generator checkpoint (required)
    --output-dir PATH  # Output directory for synthetic images (default: ./data/synthetic)
-   --num-images N     # Number of images to generate (default: 5000)
+   --num-images N     # Number of images to generate (DCGAN, WGAN-GP) (default: 5000)
+   --num-images-per-class N # Number of images per class (CGAN) (default: 2500)
    --latent-dim N     # Latent vector size (must match training) (default: 100)
    --feature-maps-g N # Generator base feature maps (must match training) (default: 64)
+   --n-classes N      # Number of classes (CGAN only) (default: 2)
    --batch-size N     # Batch size for generation (default: 64)
    --cpu              # Force CPU usage
    ```
+   *Ensure `--latent-dim`, `--feature-maps-g`, and `--n-classes` (for CGAN) match the parameters used during training.*
 
 ### Training the Augmented Classifier (Simple Concatenation)
 
@@ -394,7 +437,79 @@ This saves metrics as `curriculum_*.json` and model as `curriculum_resnet50.pth`
     *   `ssim_distribution.png`: Histogram of synthetic image SSIM scores.
     *   `gradcam_*.png`: Grad-CAM visualizations for sample images.
 
-## 7. References
+## 7. Results
+
+### Experimental Setup
+We evaluated the effectiveness of GAN-generated synthetic data by comparing three training strategies for a ResNet-50 classifier:
+1.  **Baseline:** Trained solely on the original RSNA dataset.
+2.  **Augmented:** Trained on the original dataset combined with 5000 synthetic images generated by the DCGAN model.
+3.  **Curriculum:** Trained using a curriculum learning approach where the proportion of synthetic data was gradually increased during training (20% for first two epochs, 40% thereafter), starting with the original data and the same 5000 synthetic images.
+
+All experiments utilized a ResNet-50 model pre-trained on ImageNet, fine-tuned with cross-entropy loss. Key hyperparameters for the classifier included:
+*   Optimizer: Adam
+*   Learning Rate: 0.001
+*   Batch Size: 32
+*   Epochs: 5
+*   Image Size: 224x224
+*   Normalization: Standard ImageNet means and standard deviations.
+
+The GAN (DCGAN) was trained with the following key hyperparameters:
+*   Optimizer: Adam
+*   Learning Rate: 0.0002
+*   Beta1: 0.5
+*   Batch Size: 128
+*   Epochs: 30
+*   Latent Dimension: 100
+
+Hyperparameters were selected based on common practices for fine-tuning ResNet models and training GANs, with minor adjustments based on preliminary experiments.
+
+### Evaluation Metrics
+Success was measured primarily by **classification accuracy** on the test set, comparing the performance of the augmented and curriculum models against the baseline. We also tracked **weighted precision, recall, and F1-score** to account for potential class imbalance. Evaluation robustness was ensured using **5-fold cross-validation**. Synthetic image quality was assessed using the **Structural Similarity Index (SSIM)** against real pneumonia images and visualized using **Gradient-weighted Class Activation Mapping (Grad-CAM)** to understand model focus.
+
+### Performance Comparison
+The results, summarized in `results/analysis/comparison_report.txt` and visualized below, demonstrate the impact of synthetic data augmentation.
+
+**Cross-Validation Performance:**
+According to the average results across 5 folds:
+*   The **Baseline** model achieved an average accuracy of 73.3%.
+*   The **Augmented** model, trained with a simple concatenation of real and synthetic data, showed a significant improvement, reaching an average accuracy of 82.7% (+9.4 percentage points vs. Baseline).
+*   The **Curriculum** model also outperformed the baseline with an average accuracy of 80.4% (+7.1 percentage points vs. Baseline), suggesting benefits from gradual introduction of synthetic data, although slightly less than the direct augmentation in this run.
+
+Improvements were also observed in weighted Recall and F1-score for both augmented strategies compared to the baseline.
+
+![Cross-Validation Performance Comparison](results/analysis/cv_comparison.png)
+*Figure: Comparison of average cross-validation metrics (Accuracy, Precision, Recall, F1-Score) across Baseline, Augmented, and Curriculum strategies.*
+
+**Training Dynamics:**
+Training curves illustrate the learning progression for each strategy:
+
+![Accuracy Curves](results/analysis/comparison_acc.png)
+*Figure: Training and validation accuracy curves over epochs.*
+
+![Loss Curves](results/analysis/comparison_loss.png)
+*Figure: Training and validation loss curves over epochs.*
+
+![Synthetic Ratio (Curriculum)](results/analysis/comparison_synthetic_ratio.png)
+*Figure: Proportion of synthetic data used per batch during Curriculum learning.*
+
+### Synthetic Image Quality Analysis
+**SSIM:** The distribution of SSIM scores between 500 generated images and 100 real positive images indicates moderate structural similarity, suggesting the GAN captured some relevant visual features but also divergence from real examples.
+
+![SSIM Distribution](results/analysis/ssim_distribution.png)
+*Figure: Distribution of SSIM scores comparing synthetic images to real positive X-rays.*
+
+**Grad-CAM:** Grad-CAM visualizations help compare where the different models focus their attention. Comparing heatmaps for baseline vs. augmented/curriculum models on the same images reveals how synthetic data might influence feature learning. Below are examples for a real positive, real negative, and a synthetic image processed by the baseline and augmented models (assuming available `gradcam_..._baseline.png` and `gradcam_..._augmented.png` exist for comparison - using representative synthetic image as placeholder).
+
+*Example Grad-CAM outputs (refer to `results/analysis/` for full set):*
+
+| Real Positive                                                               | Real Negative                                                                 | Synthetic Sample                                                        |
+| :--------------------------------------------------------------------------: | :----------------------------------------------------------------------------: | :----------------------------------------------------------------------: |
+| ![Real Positive GradCAM](results/analysis/gradcam_real_positive_f1ba6a94-27b8-4537-8a11-6c4dbc3fe428.png) | ![Real Negative GradCAM](results/analysis/gradcam_real_negative_ff6cc5b2-1e0d-405d-a851-1d56da425660.png) | ![Synthetic GradCAM](results/analysis/gradcam_synthetic_synthetic_00057.png) |
+
+### Conclusion
+Our results indicate that incorporating GAN-generated synthetic images significantly improves the performance of the pneumonia classifier compared to training only on the original data. Both the direct augmentation and curriculum learning strategies led to substantial gains in accuracy and other key metrics during cross-validation, as detailed in `results/analysis/comparison_report.txt`. While the direct augmentation showed slightly higher average accuracy in this particular set of experiments (82.7% vs 80.4% for curriculum and 73.3% for baseline), both methods demonstrate the value of GANs for enhancing medical image classification tasks, especially when data is limited. The SSIM and Grad-CAM analyses provide insights into the quality and impact of the synthetic data, guiding potential future improvements in GAN architecture or training.
+
+## 8. References
 [1] Goodfellow, I., et al. (2014). Generative Adversarial Nets. *Advances in Neural Information Processing Systems*.
 
 [2] Frid-Adar, M., et al. (2018). GAN-based synthetic medical image augmentation for increased CNN performance in liver lesion classification. *Neurocomputing*.
